@@ -1,0 +1,308 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>WiFi Setup - Wallpad Bridge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/style.css" />
+    <style>
+      .network-list {
+        list-style: none;
+        padding: 0;
+      }
+      .network-item {
+        background: #333;
+        padding: 12px;
+        margin: 8px 0;
+        border-radius: 5px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .network-item:hover {
+        background: #444;
+      }
+      .network-item.selected {
+        background: #0066cc;
+      }
+      .signal-strength {
+        font-size: 0.9em;
+        color: #888;
+      }
+      .form-group {
+        margin: 15px 0;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #555;
+        background: #222;
+        color: #fff;
+        border-radius: 5px;
+        box-sizing: border-box;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #0066cc;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 10px;
+      }
+      button:hover {
+        background: #0052a3;
+      }
+      button.secondary {
+        background: #555;
+      }
+      button.secondary:hover {
+        background: #666;
+      }
+      .status {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 5px;
+        text-align: center;
+      }
+      .status.info {
+        background: #004085;
+      }
+      .status.success {
+        background: #155724;
+      }
+      .status.error {
+        background: #721c24;
+      }
+      header {
+        margin-bottom: 30px;
+      }
+      nav {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        padding: 10px 0;
+        border-top: 1px solid #444;
+      }
+      nav a {
+        padding: 8px 16px;
+        background: rgba(42, 42, 62, 0.8);
+        border: 1px solid #444;
+        border-radius: 6px;
+        text-decoration: none;
+        color: #66b3ff;
+        transition: all 0.3s;
+      }
+      nav a:hover {
+        background: rgba(52, 52, 72, 0.9);
+        border-color: #0066cc;
+        text-decoration: none;
+      }
+      nav a.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🌐 WiFi 설정</h1>
+        <nav>
+          <a href="/">대시보드</a>
+          <a href="/monitor.htm">모니터</a>
+          <a href="/wifi.htm" class="active">WiFi</a>
+          <a href="/config.htm">설정</a>
+        </nav>
+      </header>
+
+      <div class="card">
+        <h3>현재 연결 상태</h3>
+        <div id="currentStatus" class="status info">로딩 중...</div>
+      </div>
+
+      <div class="card">
+        <h3>사용 가능한 네트워크</h3>
+        <button onclick="scanNetworks()" class="secondary">🔄 네트워크 스캔</button>
+        <ul id="networkList" class="network-list">
+          <li>스캔 버튼을 클릭하세요.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>WiFi 연결</h3>
+        <form id="wifiForm">
+          <div class="form-group">
+            <label>SSID</label>
+            <input type="text" id="ssid" name="ssid" placeholder="네트워크 이름" required />
+          </div>
+          <div class="form-group">
+            <label>비밀번호</label>
+            <input type="password" id="password" name="pass" placeholder="WiFi 비밀번호" />
+          </div>
+          <button type="submit">💾 저장 및 재부팅</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>고급 설정</h3>
+        <button onclick="resetWiFi()" class="secondary">🗑️ WiFi 설정 초기화</button>
+      </div>
+    </div>
+
+    <script>
+      let selectedSSID = "";
+      let ws = null;
+
+      // WebSocket 연결 설정
+      function connectWebSocket() {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = function () {
+          console.log("[WS] Connected");
+        };
+
+        ws.onmessage = function (event) {
+          try {
+            // JSON 메시지 파싱 시도
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === "wifi_scan") {
+              console.log("[WS] WiFi scan results received");
+              displayNetworks(msg.data);
+            } else if (msg.type === "wifi_status") {
+              console.log("[WS] WiFi status update");
+              loadStatus();
+            }
+          } catch (e) {
+            // RS485 데이터 등 다른 메시지는 무시
+            console.log("[WS] Non-JSON message:", event.data);
+          }
+        };
+
+        ws.onerror = function (error) {
+          console.error("[WS] Error:", error);
+        };
+
+        ws.onclose = function () {
+          console.log("[WS] Disconnected, reconnecting in 3s...");
+          setTimeout(connectWebSocket, 3000);
+        };
+      }
+
+      // 현재 상태 로드
+      function loadStatus() {
+        fetch("/wifistatus")
+          .then((res) => res.json())
+          .then((data) => {
+            const statusDiv = document.getElementById("currentStatus");
+            if (data.connected) {
+              statusDiv.className = "status success";
+              statusDiv.innerHTML = `✅ 연결됨<br>SSID: ${data.ssid}<br>IP: ${data.ip}<br>신호: ${data.rssi} dBm`;
+            } else {
+              statusDiv.className = "status error";
+              statusDiv.innerHTML = "❌ WiFi 연결 안됨 (AP 모드)";
+            }
+          })
+          .catch((err) => {
+            console.error("Status load error:", err);
+          });
+      }
+
+      // 네트워크 스캔
+      function scanNetworks() {
+        const list = document.getElementById("networkList");
+        list.innerHTML = "<li>스캔 중... (결과는 자동으로 표시됩니다)</li>";
+
+        // 스캔 시작 - 결과는 WebSocket으로 자동 수신
+        fetch("/scan")
+          .then((res) => res.json())
+          .then((data) => {
+            console.log("[SCAN] Scan initiated, waiting for WebSocket update...");
+            // WebSocket 메시지를 기다림 (onmessage에서 displayNetworks 호출됨)
+          })
+          .catch((err) => {
+            console.error("Scan error:", err);
+            list.innerHTML = "<li>스캔 실패</li>";
+          });
+      }
+
+      // 네트워크 목록 표시
+      function displayNetworks(networks) {
+        const list = document.getElementById("networkList");
+        list.innerHTML = "";
+
+        if (networks.length === 0) {
+          list.innerHTML = "<li>네트워크를 찾을 수 없습니다.</li>";
+          return;
+        }
+
+        networks.forEach((network) => {
+          const li = document.createElement("li");
+          li.className = "network-item";
+          li.innerHTML = `
+                        <span>${network.ssid}</span>
+                        <span class="signal-strength">${network.rssi} dBm</span>
+                    `;
+          li.onclick = () => {
+            document.querySelectorAll(".network-item").forEach((el) => el.classList.remove("selected"));
+            li.classList.add("selected");
+            document.getElementById("ssid").value = network.ssid;
+            selectedSSID = network.ssid;
+          };
+          list.appendChild(li);
+        });
+      }
+
+      // 폼 제출
+      document.getElementById("wifiForm").onsubmit = function (e) {
+        e.preventDefault();
+        const ssid = document.getElementById("ssid").value;
+        const pass = document.getElementById("password").value;
+
+        if (!ssid) {
+          alert("SSID를 입력하세요.");
+          return;
+        }
+
+        if (confirm(`"${ssid}"에 연결하시겠습니까?\n장치가 재부팅됩니다.`)) {
+          fetch("/connect2ssid", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`,
+          })
+            .then((res) => res.text())
+            .then((data) => {
+              alert("설정이 저장되었습니다. 장치가 재부팅됩니다.");
+            })
+            .catch((err) => {
+              console.error("Save error:", err);
+            });
+        }
+      };
+
+      // WiFi 초기화
+      function resetWiFi() {
+        if (confirm("WiFi 설정을 초기화하시겠습니까?\n장치가 재부팅되어 AP 모드로 전환됩니다.")) {
+          fetch("/wifireset", { method: "POST" }).then(() => {
+            alert("초기화되었습니다. 재부팅 중...");
+          });
+        }
+      }
+
+      // 페이지 로드 시 상태 확인 및 WebSocket 연결
+      window.onload = function () {
+        loadStatus();
+        connectWebSocket();
+      };
+    </script>
+  </body>
+</html>

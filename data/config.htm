@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>시스템 설정 - Wallpad Bridge</title>
+    <link rel="stylesheet" href="/style.css" />
+    <style>
+      .config-section {
+        background: #2a2a2a;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .config-section h2 {
+        color: #4caf50;
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 1.3em;
+        border-bottom: 2px solid #4caf50;
+        padding-bottom: 10px;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        color: #b0b0b0;
+        font-size: 0.9em;
+      }
+      .form-group input {
+        width: 100%;
+        padding: 10px;
+        background: #1a1a1a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        color: #fff;
+        font-size: 1em;
+        box-sizing: border-box;
+      }
+      .form-group input:focus {
+        outline: none;
+        border-color: #4caf50;
+      }
+      .form-group small {
+        display: block;
+        margin-top: 5px;
+        color: #888;
+        font-size: 0.85em;
+      }
+      .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+      }
+      .btn-primary {
+        flex: 1;
+        padding: 12px;
+        background: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        font-weight: bold;
+      }
+      .btn-primary:hover {
+        background: #45a049;
+      }
+      .btn-primary:disabled {
+        background: #666;
+        cursor: not-allowed;
+      }
+      .btn-secondary {
+        padding: 12px 20px;
+        background: #666;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+      }
+      .btn-secondary:hover {
+        background: #555;
+      }
+      .status-message {
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        display: none;
+      }
+      .status-message.success {
+        background: #2d5016;
+        border: 1px solid #4caf50;
+        color: #4caf50;
+      }
+      .status-message.error {
+        background: #5c1a1a;
+        border: 1px solid #f44336;
+        color: #f44336;
+      }
+      .status-message.info {
+        background: #1a3a5c;
+        border: 1px solid #2196f3;
+        color: #2196f3;
+      }
+      .loading {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #666;
+        border-top: 3px solid #4caf50;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        vertical-align: middle;
+        margin-left: 10px;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .current-value {
+        color: #4caf50;
+        font-family: monospace;
+        background: #1a1a1a;
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+      header {
+        margin-bottom: 30px;
+      }
+      nav {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        padding: 10px 0;
+        border-top: 1px solid #444;
+      }
+      nav a {
+        padding: 8px 16px;
+        background: rgba(42, 42, 62, 0.8);
+        border: 1px solid #444;
+        border-radius: 6px;
+        text-decoration: none;
+        color: #66b3ff;
+        transition: all 0.3s;
+      }
+      nav a:hover {
+        background: rgba(52, 52, 72, 0.9);
+        border-color: #0066cc;
+        text-decoration: none;
+      }
+      nav a.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>⚙️ 시스템 설정</h1>
+        <nav>
+          <a href="/">대시보드</a>
+          <a href="/monitor.htm">모니터</a>
+          <a href="/wifi.htm">WiFi</a>
+          <a href="/config.htm" class="active">설정</a>
+        </nav>
+      </header>
+
+      <main>
+        <div id="statusMessage" class="status-message"></div>
+
+        <form id="configForm">
+          <!-- WiFi 설정 섹션 -->
+          <div class="config-section">
+            <h2>📶 WiFi 설정</h2>
+            <div class="form-group">
+              <label for="wifi_ssid">SSID (네트워크 이름)</label>
+              <input type="text" id="wifi_ssid" name="wifi_ssid" placeholder="WiFi 네트워크 이름" />
+              <small>현재: <span id="current_ssid" class="current-value">로딩중...</span></small>
+            </div>
+            <div class="form-group">
+              <label for="wifi_pass">비밀번호</label>
+              <input type="password" id="wifi_pass" name="wifi_pass" placeholder="변경하려면 입력하세요" />
+              <small>비어있으면 기존 비밀번호 유지</small>
+            </div>
+          </div>
+
+          <!-- MQTT 설정 섹션 -->
+          <div class="config-section">
+            <h2>🔗 MQTT 브로커 설정</h2>
+            <div class="form-group">
+              <label for="mqtt_server">서버 주소</label>
+              <input type="text" id="mqtt_server" name="mqtt_server" placeholder="예: 192.168.1.100" />
+              <small>현재: <span id="current_mqtt_server" class="current-value">로딩중...</span></small>
+            </div>
+            <div class="form-group">
+              <label for="mqtt_port">포트</label>
+              <input type="number" id="mqtt_port" name="mqtt_port" placeholder="1883" />
+              <small>현재: <span id="current_mqtt_port" class="current-value">로딩중...</span></small>
+            </div>
+            <div class="form-group">
+              <label for="mqtt_user">사용자 이름</label>
+              <input type="text" id="mqtt_user" name="mqtt_user" placeholder="선택사항" />
+              <small>현재: <span id="current_mqtt_user" class="current-value">로딩중...</span></small>
+            </div>
+            <div class="form-group">
+              <label for="mqtt_pass">비밀번호</label>
+              <input type="password" id="mqtt_pass" name="mqtt_pass" placeholder="변경하려면 입력하세요" />
+              <small>비어있으면 기존 비밀번호 유지</small>
+            </div>
+          </div>
+
+          <div class="button-group">
+            <button type="button" class="btn-secondary" onclick="loadConfig()">🔄 새로고침</button>
+            <button type="submit" class="btn-primary" id="saveBtn">💾 저장 및 재부팅</button>
+          </div>
+        </form>
+
+        <div class="config-section" style="margin-top: 30px">
+          <h2>ℹ️ 안내</h2>
+          <ul style="color: #b0b0b0; line-height: 1.8">
+            <li>설정 변경 후 저장하면 <strong>자동으로 재부팅</strong>됩니다.</li>
+            <li>WiFi 설정을 변경하면 새 네트워크로 연결을 시도합니다.</li>
+            <li>연결 실패 시 AP 모드(Wallpad_Setup)로 돌아갑니다.</li>
+            <li>MQTT 설정은 즉시 적용되며 Home Assistant와 통신합니다.</li>
+            <li>비밀번호 필드를 비워두면 기존 비밀번호가 유지됩니다.</li>
+          </ul>
+        </div>
+      </main>
+
+      <footer>Wallpad Bridge v1.0 &copy; 2026</footer>
+    </div>
+
+    <script>
+      // 현재 설정 로드
+      async function loadConfig() {
+        try {
+          showStatus("현재 설정을 불러오는 중...", "info");
+
+          const response = await fetch("/api/config");
+          if (!response.ok) {
+            throw new Error("설정을 불러올 수 없습니다");
+          }
+
+          const config = await response.json();
+
+          // WiFi 설정 표시
+          document.getElementById("wifi_ssid").value = config.wifi.ssid || "";
+          document.getElementById("current_ssid").textContent = config.wifi.ssid || "(없음)";
+
+          // MQTT 설정 표시
+          document.getElementById("mqtt_server").value = config.mqtt.server || "";
+          document.getElementById("mqtt_port").value = config.mqtt.port || 1883;
+          document.getElementById("mqtt_user").value = config.mqtt.user || "";
+
+          document.getElementById("current_mqtt_server").textContent = config.mqtt.server || "(없음)";
+          document.getElementById("current_mqtt_port").textContent = config.mqtt.port || "1883";
+          document.getElementById("current_mqtt_user").textContent = config.mqtt.user || "(없음)";
+
+          hideStatus();
+        } catch (error) {
+          showStatus("설정 로드 실패: " + error.message, "error");
+        }
+      }
+
+      // 설정 저장
+      async function saveConfig(event) {
+        event.preventDefault();
+
+        const saveBtn = document.getElementById("saveBtn");
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '저장 중... <span class="loading"></span>';
+
+        try {
+          const config = {
+            wifi: {
+              ssid: document.getElementById("wifi_ssid").value,
+              pass: document.getElementById("wifi_pass").value,
+            },
+            mqtt: {
+              server: document.getElementById("mqtt_server").value,
+              port: parseInt(document.getElementById("mqtt_port").value) || 1883,
+              user: document.getElementById("mqtt_user").value,
+              pass: document.getElementById("mqtt_pass").value,
+            },
+          };
+
+          // 빈 비밀번호는 전송하지 않음 (기존 비밀번호 유지)
+          if (!config.wifi.pass) {
+            delete config.wifi.pass;
+          }
+          if (!config.mqtt.pass) {
+            delete config.mqtt.pass;
+          }
+
+          const response = await fetch("/api/config", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(config),
+          });
+
+          if (!response.ok) {
+            throw new Error("설정 저장 실패");
+          }
+
+          showStatus("✓ 설정이 저장되었습니다. 재부팅 중... (30초 후 새로고침)", "success");
+
+          // 30초 후 자동 새로고침
+          setTimeout(() => {
+            window.location.reload();
+          }, 30000);
+        } catch (error) {
+          showStatus("저장 실패: " + error.message, "error");
+          saveBtn.disabled = false;
+          saveBtn.textContent = "💾 저장 및 재부팅";
+        }
+      }
+
+      // 상태 메시지 표시
+      function showStatus(message, type) {
+        const statusDiv = document.getElementById("statusMessage");
+        statusDiv.textContent = message;
+        statusDiv.className = "status-message " + type;
+        statusDiv.style.display = "block";
+      }
+
+      // 상태 메시지 숨김
+      function hideStatus() {
+        const statusDiv = document.getElementById("statusMessage");
+        statusDiv.style.display = "none";
+      }
+
+      // 폼 제출 이벤트
+      document.getElementById("configForm").addEventListener("submit", saveConfig);
+
+      // 페이지 로드 시 현재 설정 로드
+      window.addEventListener("load", loadConfig);
+    </script>
+  </body>
+</html>
