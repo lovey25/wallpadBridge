@@ -116,9 +116,42 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
 ### 4.3 회로
 
+```.
+[ 12V DC POWER ]                [ DC-DC BUCK CONVERTER ]
+ 월패드 12V (+) ----------------------- [IN+]         [OUT+] ---+--- 5V (System VCC)
+ 월패드 GND (-) ----------------------- [IN-]         [OUT-] ---|--- GND (System GND)
+                                                                |
+      +---------------------------------------------------------+
+      |
+      |      [ WEMOS D1 MINI ]                [ XY-017 RS485 MODULE ]
+      +------- 5V (VIN)                          VCC ----------- 5V
+      |        GND ------------------------------ GND ----------- GND
+      |                                           TXD ----------- D1 (GPIO5)
+      |                                           RXD ----------- D2 (GPIO4)
+      |                                            A  ----------- 월패드 RS485 (A)
+      |                                            B  ----------- 월패드 RS485 (B)
+      |
+      |      [ BINARY SENSING (3 Channels) ]
+      |      * PC817 Optocoupler (Typical for 1 ch)
+      |
+월패드 12V(S1) --[ 1kΩ Resistor ]-- (Pin 1:Anode)  (Pin 4:Collector) --- D5 (GPIO14)
+월패드 GND ------------------------ (Pin 2:Cathode)(Pin 3:Emitter)   --- GND
+      |
+월패드 12V(S2) --[ 1kΩ Resistor ]-- (Pin 1:Anode)  (Pin 4:Collector) --- D6 (GPIO12)
+월패드 GND ------------------------ (Pin 2:Cathode)(Pin 3:Emitter)   --- GND
+      |
+월패드 12V(S3) --[ 1kΩ Resistor ]-- (Pin 1:Anode)  (Pin 4:Collector) --- D7 (GPIO13)
+월패드 GND ------------------------ (Pin 2:Cathode)(Pin 3:Emitter)   --- GND
+
+--------------------------------------------------------------------------------
+[설계 참고사항]
+1. Wemos D1 Mini의 D5, D6, D7은 소프트웨어에서 INPUT_PULLUP으로 설정.
+2. RS485 모듈(XY-017)은 5V 전원을 사용하되, 데이터 핀(TXD/RXD)은 Wemos의 3.3V 로직과 직결 (9600bps 가동 시 안정적).
+```
+
 <table>
   <tr>
-    <td><img src="circuit/everyESP485_wtAMS1117.png" alt="HW" height="300"></td>
+    <td><img src="circuit/wallpad_bridge_wtAMS1117_bb.png" alt="HW" height="300"></td>
     <td><img src="circuit/hardware_sample.jpeg" alt="SAMPLE" height="300"></td>
   </tr>
 </table>
@@ -160,32 +193,8 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
 - 실제 월패드 하드웨어 RS485 통신 테스트
 - OTA 펌웨어 업데이트 기능
-- 웹 UI 인증 및 보안 강화
-- 프리셋 시스템 및 자동화 시나리오
 
----
-
-## 8. 기여 가이드 (Contributing)
-
-프로젝트 개선에 기여하고 싶으시다면:
-
-1. Fork 후 feature 브랜치 생성
-2. [TODO.md](./TODO.md)의 작업 중 하나를 선택
-3. 코드 작성 후 Pull Request 제출
-4. 코드 리뷰 및 머지
-
-**코딩 컨벤션**:
-
-- C++ 표준: C++11 이상
-- 들여쓰기: 2칸 스페이스
-- 변수명: camelCase
-- 함수명: camelCase
-- 클래스명: PascalCase
-- 상수: UPPER_CASE
-
----
-
-## 9. 참고 문서 (References)
+## 8. 참고 문서 (References)
 
 - [TODO.md](./TODO.md) - 상세 로드맵 및 작업 목록
 - [wallpad_protocol.md](./wallpad_protocol.md) - RS485 통신 규약
@@ -194,6 +203,6 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
 ---
 
-## 10. 라이선스 (License)
+## 9. 라이선스 (License)
 
 MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
