@@ -160,6 +160,66 @@
         color: white;
         border-color: #0066cc;
       }
+      .info-section {
+        margin-top: 30px;
+      }
+      .info-list {
+        color: #b0b0b0;
+        line-height: 1.8;
+      }
+      .network-list {
+        list-style: none;
+        padding: 0;
+        margin: 15px 0;
+      }
+      .network-item {
+        background: #1a1a1a;
+        padding: 12px;
+        margin: 8px 0;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border: 1px solid #444;
+      }
+      .network-item:hover {
+        background: #222;
+        border-color: #4caf50;
+      }
+      .network-item.selected {
+        background: #2d5016;
+        border-color: #4caf50;
+      }
+      .signal-strength {
+        font-size: 0.9em;
+        color: #888;
+      }
+      .wifi-status {
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+      }
+      .wifi-status.connected {
+        background: #2d5016;
+        border: 1px solid #4caf50;
+        color: #4caf50;
+      }
+      .wifi-status.disconnected {
+        background: #5c1a1a;
+        border: 1px solid #f44336;
+        color: #f44336;
+      }
+      .empty-message {
+        color: #888;
+        text-align: center;
+        padding: 20px;
+      }
+      .error-message {
+        color: #f44336;
+        text-align: center;
+        padding: 20px;
+      }
     </style>
   </head>
   <body>
@@ -169,13 +229,27 @@
         <nav>
           <a href="/">대시보드</a>
           <a href="/monitor.htm">모니터</a>
-          <a href="/wifi.htm">WiFi</a>
           <a href="/config.htm" class="active">설정</a>
         </nav>
       </header>
 
       <main>
         <div id="statusMessage" class="status-message"></div>
+
+        <!-- WiFi 연결 상태 -->
+        <div class="config-section">
+          <h2>📡 WiFi 연결 상태</h2>
+          <div id="wifiCurrentStatus" class="wifi-status disconnected">로딩 중...</div>
+        </div>
+
+        <!-- WiFi 네트워크 스캔 -->
+        <div class="config-section">
+          <h2>🔍 사용 가능한 네트워크</h2>
+          <button type="button" class="btn-secondary" onclick="scanNetworks()">🔄 네트워크 스캔</button>
+          <ul id="networkList" class="network-list">
+            <li class="empty-message">스캔 버튼을 클릭하세요.</li>
+          </ul>
+        </div>
 
         <form id="configForm">
           <!-- WiFi 설정 섹션 -->
@@ -224,15 +298,23 @@
           </div>
         </form>
 
-        <div class="config-section" style="margin-top: 30px">
+        <div class="config-section info-section">
           <h2>ℹ️ 안내</h2>
-          <ul style="color: #b0b0b0; line-height: 1.8">
+          <ul class="info-list">
             <li>설정 변경 후 저장하면 <strong>자동으로 재부팅</strong>됩니다.</li>
             <li>WiFi 설정을 변경하면 새 네트워크로 연결을 시도합니다.</li>
             <li>연결 실패 시 AP 모드(Wallpad_Setup)로 돌아갑니다.</li>
             <li>MQTT 설정은 즉시 적용되며 Home Assistant와 통신합니다.</li>
             <li>비밀번호 필드를 비워두면 기존 비밀번호가 유지됩니다.</li>
           </ul>
+        </div>
+
+        <div class="config-section">
+          <h2>🔧 고급 옵션</h2>
+          <div class="button-group">
+            <button type="button" class="btn-secondary" onclick="resetWiFi()">🗑️ WiFi 설정 초기화</button>
+            <button type="button" class="btn-secondary" onclick="rebootDevice()">🔄 재부팅</button>
+          </div>
         </div>
       </main>
 
@@ -340,11 +422,228 @@
         statusDiv.style.display = "none";
       }
 
-      // 폼 제출 이벤트
-      document.getElementById("configForm").addEventListener("submit", saveConfig);
+      // WiFi 현재 상태 로드
+      function loadWiFiStatus() {
+        fetch("/wifistatus")
+          .then((res) => res.json())
+          .then((data) => {
+            const statusDiv = document.getElementById("wifiCurrentStatus");
+            if (data.connected) {
+              statusDiv.className = "wifi-status connected";
+              statusDiv.innerHTML = `✅ 연결됨<br>SSID: ${data.ssid}<br>IP: ${data.ip}<br>신호: ${data.rssi} dBm`;
+            } else {
+              statusDiv.className = "wifi-status disconnected";
+              statusDiv.innerHTML = "❌ WiFi 연결 안됨 (AP 모드)";
+            }
+          })
+          .catch((err) => {
+            console.error("WiFi status load error:", err);
+          });
+      }
 
-      // 페이지 로드 시 현재 설정 로드
-      window.addEventListener("load", loadConfig);
+      // WiFi 네트워크 스캔
+      let ws = null;
+      let wsReconnectTimer = null;
+
+      function scanNetworks() {
+        console.log("[SCAN] Scan button clicked");
+        const list = document.getElementById("networkList");
+
+        // WebSocket 연결 상태 확인
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          console.log("[SCAN] ❌ WebSocket not ready. State:", ws ? ws.readyState : "null");
+          list.innerHTML = '<li class="error-message">WebSocket 연결 중... 잠시 후 다시 시도하세요</li>';
+
+          // 연결 시도
+          if (!ws || ws.readyState === WebSocket.CLOSED) {
+            console.log("[SCAN] Attempting to reconnect WebSocket...");
+            connectWebSocket();
+          }
+          return;
+        }
+
+        console.log("[SCAN] ✅ WebSocket ready, initiating scan");
+        list.innerHTML = '<li class="empty-message">스캔 중...</li>';
+
+        fetch("/scan")
+          .then((res) => {
+            console.log("[SCAN] HTTP response status:", res.status);
+            return res.json();
+          })
+          .then((data) => {
+            console.log("[SCAN] HTTP response data:", data);
+            // 캐시된 결과가 있으면 즉시 표시
+            if (data && data.length > 0) {
+              console.log("[SCAN] Displaying cached results:", data.length, "networks");
+              displayNetworks(data);
+            } else {
+              console.log("[SCAN] Empty cache, waiting for WebSocket update");
+              list.innerHTML = '<li class="empty-message">스캔 중... (WebSocket으로 결과를 받습니다)</li>';
+            }
+          })
+          .catch((err) => {
+            console.error("[SCAN] HTTP error:", err);
+            list.innerHTML = '<li class="error-message">스캔 실패</li>';
+          });
+      }
+
+      // 네트워크 목록 표시
+      function displayNetworks(networks) {
+        console.log("[DISPLAY] Displaying networks:", networks);
+        const list = document.getElementById("networkList");
+        list.innerHTML = "";
+
+        if (networks.length === 0) {
+          console.log("[DISPLAY] No networks to display");
+          list.innerHTML = '<li class="empty-message">네트워크를 찾을 수 없습니다.</li>';
+          return;
+        }
+
+        networks.forEach((network) => {
+          const li = document.createElement("li");
+          li.className = "network-item";
+          li.innerHTML = `
+            <span>${network.ssid}</span>
+            <span class="signal-strength">${network.rssi} dBm</span>
+          `;
+          li.onclick = () => {
+            document.querySelectorAll(".network-item").forEach((el) => el.classList.remove("selected"));
+            li.classList.add("selected");
+            document.getElementById("wifi_ssid").value = network.ssid;
+          };
+          list.appendChild(li);
+        });
+      }
+
+      // WebSocket 연결 (WiFi 스캔 결과 수신용)
+      function connectWebSocket() {
+        // 기존 연결이 있으면 먼저 정리
+        if (ws) {
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            console.log("[WS] Closing existing connection before creating new one");
+            ws.onclose = null; // 재연결 방지
+            ws.close();
+          }
+        }
+
+        // 재연결 타이머 클리어
+        if (wsReconnectTimer) {
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = null;
+        }
+
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+        ws = new WebSocket(wsUrl);
+        console.log("[WS] Connecting to:", wsUrl);
+
+        ws.onopen = function () {
+          console.log("[WS] ✅ Connected successfully");
+        };
+
+        ws.onmessage = function (event) {
+          console.log("[WS] Message received:", event.data);
+          try {
+            const msg = JSON.parse(event.data);
+            console.log("[WS] Parsed message:", msg);
+            if (msg.type === "wifi_scan") {
+              console.log("[WS] ✅ WiFi scan results received, count:", msg.data ? msg.data.length : 0);
+              displayNetworks(msg.data);
+            } else {
+              console.log("[WS] Ignoring message type:", msg.type);
+            }
+          } catch (e) {
+            console.log("[WS] Non-JSON message ignored:", event.data);
+          }
+        };
+
+        ws.onerror = function (error) {
+          console.error("[WS] ❌ Error:", error);
+        };
+
+        ws.onclose = function () {
+          console.log("[WS] Disconnected, reconnecting in 5s...");
+          if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = setTimeout(connectWebSocket, 5000);
+        };
+      }
+
+      // WebSocket 정리 함수
+      function cleanupWebSocket() {
+        console.log("[CONFIG] Cleaning up WebSocket");
+        if (wsReconnectTimer) {
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = null;
+        }
+        if (ws) {
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.onclose = null; // 재연결 방지
+            ws.close(1000, "Page navigation"); // 정상 종료 코드
+            console.log("[CONFIG] WebSocket closed");
+          }
+          ws = null;
+        }
+      }
+
+      // 페이지 떠날 때 정리 (여러 이벤트 사용)
+      window.addEventListener("beforeunload", cleanupWebSocket);
+      window.addEventListener("pagehide", cleanupWebSocket);
+
+      // 페이지가 숨겨질 때 재연결 중지
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+          console.log("[CONFIG] Page hidden, stopping reconnect");
+          if (wsReconnectTimer) {
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+          }
+        }
+      });
+
+      // WiFi 초기화
+      function resetWiFi() {
+        if (confirm("WiFi 설정을 초기화하시겠습니까?\n장치가 재부팅되어 AP 모드로 전환됩니다.")) {
+          fetch("/wifireset", { method: "POST" })
+            .then(() => {
+              showStatus("WiFi 설정이 초기화되었습니다. 재부팅 중...", "success");
+              setTimeout(() => {
+                window.location.reload();
+              }, 30000);
+            })
+            .catch((err) => {
+              console.error("WiFi reset error:", err);
+            });
+        }
+      }
+
+      // 재부팅
+      function rebootDevice() {
+        if (confirm("장치를 재부팅하시겠습니까?")) {
+          fetch("/reboot", { method: "POST" })
+            .then(() => {
+              showStatus("재부팅 중입니다. 잠시 후 페이지를 새로고침하세요.", "success");
+              setTimeout(() => {
+                window.location.reload();
+              }, 30000);
+            })
+            .catch((err) => {
+              // 재부팅으로 인한 연결 끊김은 정상
+            });
+        }
+      }
+
+      // 스크립트 로드 즉시 WebSocket 연결 시작 (DOM 대기 없음)
+      console.log("[CONFIG] Script loaded, connecting WebSocket immediately");
+      connectWebSocket();
+
+      // 페이지 로드 시 설정 로드 (DOM 의존적인 작업)
+      window.addEventListener("load", function () {
+        console.log("[CONFIG] DOM ready, loading config");
+        loadConfig();
+        loadWiFiStatus();
+        document.getElementById("configForm").addEventListener("submit", saveConfig);
+      });
     </script>
   </body>
 </html>

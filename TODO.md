@@ -6,10 +6,11 @@
 
 **Priority: High**
 
-- [ ] Serial Monitor로 부팅 로그 확인
-- [ ] WiFi 연결 및 MQTT 연결 검증
-- [ ] 웹 UI 접속 테스트 (http://[ESP_IP])
-- [ ] config.htm에서 설정 변경 및 저장 테스트
+- [x] Serial Monitor로 부팅 로그 확인
+- [x] WiFi 연결 및 MQTT 연결 검증
+- [x] 웹 UI 접속 테스트 (http://[ESP_IP])
+- [x] config.htm에서 설정 변경 및 저장 테스트
+- [x] WebSocket 연결 성능 최적화 (8초 → 20ms)
 
 ### 2. RS485 실제 통신 테스트
 
@@ -33,13 +34,17 @@
 
 **Priority: Medium**
 
-- [ ] MQTT Discovery 자동 등록 확인
-  - Light 엔티티 4개
+- [x] MQTT Discovery 자동 등록 확인
+  - Light 엔티티 3개 (거실조명1, 거실조명2, 3Way 조명)
   - Fan 엔티티
   - Door Lock 엔티티
-  - Climate 엔티티 2개
+  - Climate 엔티티 4개 (거실, 방1, 방2, 방3)
   - Binary Sensor 엔티티 3개
-- [ ] Home Assistant UI에서 장치 제어 테스트
+- [x] Discovery 비동기 발행으로 성능 개선 (200ms 간격)
+- [x] Climate 엔티티 온도 조절기 설정 수정
+  - temperature_unit, precision 필드 추가
+  - Mode 소문자 변경 (heat, off)
+- [ ] Home Assistant UI에서 장치 제어 테스트 (실제 RS485 필요)
 - [ ] LWT(Last Will Testament) 동작 확인
 - [ ] 상태 동기화 검증 (RS485 → MQTT)
 
@@ -106,8 +111,17 @@
 
 - **메모리**: ESP8266 제한으로 동시 처리 가능한 장치 수 제한
 - **RS485**: SoftwareSerial 사용으로 9600bps 제한
-- **WebSocket**: 동시 연결 클라이언트 수 제한 (기본 4개)
+- **WebSocket**: 동시 연결 클라이언트 수 제한 (최대 3개)
 - **LittleFS**: 256KB 파일시스템 용량
+
+## ✅ 최근 해결된 이슈
+
+### 2026-02-18: 성능 최적화
+
+- **WebSocket 연결 지연 (8초)**: monitor.htm의 script를 head → body 끝으로 이동하여 해결
+- **WiFi 스캔 느림 (10초+)**: Hidden SSID 스캔 제외로 해결
+- **MQTT Discovery blocking**: 비동기 분산 발행으로 개선
+- **Climate 엔티티 표시 오류**: Discovery 설정 수정 및 mode 소문자 변경
 
 ---
 

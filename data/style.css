@@ -41,6 +41,7 @@ h3 {
 
 .card {
   background: rgba(42, 42, 62, 0.8);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   padding: 20px;
   border-radius: 12px;
@@ -302,4 +303,147 @@ tr:hover {
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* Monitor 페이지 전용 스타일 */
+#console {
+  height: 400px;
+  background: #000;
+  color: #0f0;
+  font-family: "Courier New", monospace;
+  font-size: 13px;
+  overflow-y: auto;
+  padding: 15px;
+  border: 1px solid #555;
+  border-radius: 5px;
+  margin: 15px 0;
+}
+
+.log-rx {
+  color: #00ff00;
+}
+.log-tx {
+  color: #00aaff;
+}
+.log-state {
+  color: #ffaa00;
+}
+.log-error {
+  color: #ff4444;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  margin: 15px 0;
+}
+
+.controls input {
+  flex: 1;
+  padding: 10px;
+  background: #222;
+  border: 1px solid #555;
+  color: #fff;
+  font-family: monospace;
+  border-radius: 5px;
+}
+
+.controls button {
+  padding: 10px 20px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.controls button:hover {
+  background: #0052a3;
+}
+
+.controls button.secondary {
+  background: #555;
+}
+
+.controls button.secondary:hover {
+  background: #666;
+}
+
+.filter-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.filter-btn {
+  padding: 8px 15px;
+  background: #333;
+  border: 1px solid #555;
+  color: #fff;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.filter-btn.active {
+  background: #0066cc;
+  border-color: #0066cc;
+}
+
+.status-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-connected {
+  background: #00ff00;
+  box-shadow: 0 0 8px #00ff00;
+}
+
+.status-disconnected {
+  background: #ff4444;
+}
+
+/* Navigation 스타일 */
+header {
+  margin-bottom: 30px;
+}
+
+nav {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 10px 0;
+  border-top: 1px solid #444;
+}
+
+nav a {
+  padding: 8px 16px;
+  background: rgba(42, 42, 62, 0.8);
+  border: 1px solid #444;
+  border-radius: 6px;
+  text-decoration: none;
+  color: #66b3ff;
+  transition: all 0.3s;
+}
+
+nav a:hover {
+  background: rgba(52, 52, 72, 0.9);
+  border-color: #0066cc;
+  text-decoration: none;
+}
+
+nav a.active {
+  background: #0066cc;
+  color: white;
+  border-color: #0066cc;
+}
+
+.hint-text {
+  font-size: 12px;
+  color: #888;
 }

@@ -194,11 +194,13 @@ public:
     json += "\"device\":\"climate\",";
     json += "\"room\":" + String(state.roomAddress) + ",";
 
-    String modeStr = "OFF";
+    // Home Assistant Climate 모드는 소문자 사용 (off, heat)
+    String modeStr = "off";
     if (state.mode == 0x01)
-      modeStr = "HEAT";
+      modeStr = "heat"; // 난방 모드
     else if (state.mode == 0x07)
-      modeStr = "AWAY";
+      modeStr = "off"; // 외출 모드는 off로 처리
+    // 0x04 = OFF는 기본값 "off" 사용
 
     json += "\"mode\":\"" + modeStr + "\",";
     json += "\"current_temp\":" + String(state.currentTemp) + ",";

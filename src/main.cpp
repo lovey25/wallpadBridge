@@ -270,13 +270,20 @@ void watchdogCallback()
 void performWiFiScan()
 {
   if (scanInProgress)
+  {
+    Serial.println("[SCAN] Already in progress, skipping");
     return;
+  }
 
+  Serial.println("[SCAN] Starting WiFi scan...");
   scanInProgress = true;
-  Serial.println("WiFi scan starting (async)...");
 
-  // 비동기 스캔 시작 (non-blocking)
-  WiFi.scanNetworks(true, true); // 비동기=true, 숨김네트워크표시=true
+  // 이전 스캔 결과 삭제
+  WiFi.scanDelete();
+
+  // 비동기 스캔 시작 (non-blocking, hidden SSID 제외)
+  WiFi.scanNetworks(true, false);
+  Serial.println("[SCAN] Scan initiated");
 }
 
 // WiFi 스캔 완료 확인 및 결과 처리 (loop에서 호출)
@@ -296,9 +303,10 @@ void checkWiFiScanComplete()
   if (n >= 0)
   {
     // 스캔 완료 - 결과 처리
-    Serial.printf("WiFi scan complete: %d networks found\n", n);
+    Serial.print("[SCAN] Scan complete, found ");
+    Serial.print(n);
+    Serial.println(" networks");
 
-    // 최대 20개까지만 처리 (메모리 절약)
     int maxNetworks = (n > 20) ? 20 : n;
 
     String json = "[";
@@ -317,17 +325,28 @@ void checkWiFiScanComplete()
     WiFi.scanDelete(); // 스캔 결과 메모리 해제
 
     // WebSocket으로 스캔 결과 브로드캐스트 (클라이언트 있고 메모리 충분할 때만)
+    Serial.print("[SCAN] WebSocket clients connected: ");
+    Serial.println(ws.count());
+    Serial.print("[SCAN] Free heap: ");
+    Serial.println(ESP.getFreeHeap());
+
     if (ws.count() > 0 && ESP.getFreeHeap() > 15000)
     {
       String wsMessage = "{\"type\":\"wifi_scan\",\"data\":" + json + "}";
+      Serial.println("[SCAN] Broadcasting results via WebSocket");
       ws.textAll(wsMessage);
-      Serial.println("[WS] WiFi scan results broadcasted");
+      Serial.println("[SCAN] Broadcast complete");
+    }
+    else
+    {
+      Serial.println("[SCAN] Not broadcasting (no clients or low memory)");
     }
   }
   else
   {
     // 스캔 실패
-    Serial.printf("WiFi scan failed: %d\n", n);
+    Serial.print("[SCAN] Scan failed with code: ");
+    Serial.println(n);
     cachedScanResults = "[]";
   }
 
@@ -385,6 +404,8 @@ bool connectMQTT()
     mqtt.subscribe("home/wallpad/fan/set");
     mqtt.subscribe("home/wallpad/climate/1/set");
     mqtt.subscribe("home/wallpad/climate/2/set");
+    mqtt.subscribe("home/wallpad/climate/3/set");
+    mqtt.subscribe("home/wallpad/climate/4/set");
     mqtt.publish("home/wallpad/status", "online", true);
     return true;
   }
@@ -395,28 +416,141 @@ bool connectMQTT()
   }
 }
 
-// Home Assistant MQTT Discovery 메시지 발행
+// Home Assistant MQTT Discovery - 개별 엔티티 발행 (비동기)
+bool publishDiscoveryEntity(int index)
+{
+  if (!mqtt.connected() || ESP.getFreeHeap() < 12000)
+    return false;
+
+  const char *deviceInfo = ",\"device\":{\"identifiers\":[\"wallpad_bridge\"],\"name\":\"Wallpad Bridge\",\"model\":\"ESP8266 RS485\",\"manufacturer\":\"EveryX\",\"sw_version\":\"1.0.0\"}";
+  String config, topic;
+  bool result = false;
+
+  // index에 따라 엔티티 발행
+  switch (index)
+  {
+  case 0: // Light 1 (거실조명1)
+    config = "{\"name\":\"거실조명1\",\"unique_id\":\"wallpad_light_1\",\"state_topic\":\"home/wallpad/light/1/state\",\"command_topic\":\"home/wallpad/set\",\"payload_on\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":17,\\\"state\\\":\\\"ON\\\"}\",\"payload_off\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":17,\\\"state\\\":\\\"OFF\\\"}\",\"optimistic\":false";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/light/wallpad_light_1/config", config.c_str(), true);
+    Serial.println("[DISCOVERY] Published: Light 1");
+    break;
+
+  case 1: // Light 2 (거실조명2)
+    config = "{\"name\":\"거실조명2\",\"unique_id\":\"wallpad_light_2\",\"state_topic\":\"home/wallpad/light/2/state\",\"command_topic\":\"home/wallpad/set\",\"payload_on\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":18,\\\"state\\\":\\\"ON\\\"}\",\"payload_off\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":18,\\\"state\\\":\\\"OFF\\\"}\",\"optimistic\":false";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/light/wallpad_light_2/config", config.c_str(), true);
+    Serial.println("[DISCOVERY] Published: Light 2");
+    break;
+
+  case 2: // Light 3 (3Way 조명)
+    config = "{\"name\":\"3Way 조명\",\"unique_id\":\"wallpad_light_3\",\"state_topic\":\"home/wallpad/light/3/state\",\"command_topic\":\"home/wallpad/set\",\"payload_on\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":19,\\\"state\\\":\\\"ON\\\"}\",\"payload_off\":\"{\\\"device\\\":\\\"light\\\",\\\"address\\\":19,\\\"state\\\":\\\"OFF\\\"}\",\"optimistic\":false";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/light/wallpad_light_3/config", config.c_str(), true);
+    Serial.println("[DISCOVERY] Published: Light 3");
+    break;
+
+  case 3: // Fan (환기)
+    config = "{\"name\":\"환기\",\"unique_id\":\"wallpad_fan\",\"state_topic\":\"home/wallpad/fan/state\",\"command_topic\":\"home/wallpad/fan/set\",\"state_value_template\":\"{{ value_json.state }}\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/fan/wallpad_fan/config", config.c_str(), true);
+    Serial.println("[DISCOVERY] Published: Fan");
+    break;
+
+  case 4: // Door Lock
+    config = "{\"name\":\"현관 도어락\",\"unique_id\":\"wallpad_doorlock\",\"state_topic\":\"home/wallpad/doorlock/state\",\"command_topic\":\"home/wallpad/set\",\"payload_unlock\":\"{\\\"device\\\":\\\"doorlock\\\"}\",\"state_locked\":\"LOCKED\",\"state_unlocked\":\"UNLOCKED\",\"optimistic\":false";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/lock/wallpad_doorlock/config", config.c_str(), true);
+    Serial.println("[DISCOVERY] Published: Door Lock");
+    break;
+
+  case 5: // Climate 1 (거실 난방)
+  case 6: // Climate 2 (방1 난방)
+  case 7: // Climate 3 (방2 난방)
+  case 8: // Climate 4 (방3 난방)
+  {
+    int climateNum = index - 4;
+    const char *climateNames[] = {"거실 난방", "방1 난방", "방2 난방", "방3 난방"};
+    uint8_t roomAddr = 0x10 + climateNum;
+
+    config = "{\"name\":\"" + String(climateNames[climateNum - 1]) + "\",";
+    config += "\"unique_id\":\"wallpad_climate_" + String(climateNum) + "\",";
+    config += "\"modes\":[\"off\",\"heat\"],";
+    config += "\"mode_state_topic\":\"home/wallpad/climate/" + String(climateNum) + "/state\",";
+    config += "\"mode_state_template\":\"{{ value_json.mode }}\",";
+    config += "\"mode_command_topic\":\"home/wallpad/climate/" + String(climateNum) + "/set\",";
+    config += "\"mode_command_template\":\"{\\\"device\\\":\\\"climate\\\",\\\"room\\\":" + String(roomAddr) + ",\\\"mode\\\":\\\"{{ value }}\\\"}\",";
+    config += "\"temperature_state_topic\":\"home/wallpad/climate/" + String(climateNum) + "/state\",";
+    config += "\"temperature_state_template\":\"{{ value_json.target_temp }}\",";
+    config += "\"temperature_command_topic\":\"home/wallpad/climate/" + String(climateNum) + "/set\",";
+    config += "\"temperature_command_template\":\"{\\\"device\\\":\\\"climate\\\",\\\"room\\\":" + String(roomAddr) + ",\\\"target_temp\\\":{{ value }}}\",";
+    config += "\"current_temperature_topic\":\"home/wallpad/climate/" + String(climateNum) + "/state\",";
+    config += "\"current_temperature_template\":\"{{ value_json.current_temp }}\",";
+    config += "\"temperature_unit\":\"C\",";
+    config += "\"precision\":1.0,";
+    config += "\"min_temp\":15,";
+    config += "\"max_temp\":30,";
+    config += "\"temp_step\":1";
+    config += deviceInfo;
+    config += "}";
+
+    topic = "homeassistant/climate/wallpad_climate_" + String(climateNum) + "/config";
+    result = mqtt.publish(topic.c_str(), config.c_str(), true);
+    Serial.printf("[DISCOVERY] Published: Climate %d\n", climateNum);
+  }
+  break;
+
+  case 9:  // Binary Sensor 1
+  case 10: // Binary Sensor 2
+  case 11: // Binary Sensor 3 (마지막)
+  {
+    int sensorNum = index - 8;
+    config = "{\"name\":\"Binary Sensor " + String(sensorNum) + "\",\"unique_id\":\"wallpad_binary_" + String(sensorNum) + "\",\"state_topic\":\"home/wallpad/binary/" + String(sensorNum) + "\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device_class\":\"motion\"";
+    config += deviceInfo;
+    config += "}";
+
+    topic = "homeassistant/binary_sensor/wallpad_binary_" + String(sensorNum) + "/config";
+    result = mqtt.publish(topic.c_str(), config.c_str(), true);
+    Serial.printf("[DISCOVERY] Published: Binary Sensor %d\n", sensorNum);
+  }
+  break;
+
+  default:
+    return false;
+  }
+
+  yield(); // CPU 양보
+  return result;
+}
+
+// Home Assistant MQTT Discovery 메시지 발행 (레거시 - 호환용)
 void publishDiscovery()
 {
   if (!mqtt.connected())
     return;
 
-  Serial.println("[DISCOVERY] Publishing entities...");
+  Serial.println("[DISCOVERY] Publishing entities (legacy mode)...");
   yield();
 
   // Device 정보 (모든 엔티티에 공통)
-  const char *deviceInfo = ",\"device\":{\"identifiers\":[\"wallpad_bridge\"],\"name\":\"Wallpad Bridge\",\"model\":\"ESP8266 RS485\",\"manufacturer\":\"Custom\",\"sw_version\":\"1.0.0\"}";
+  const char *deviceInfo = ",\"device\":{\"identifiers\":[\"wallpad_bridge\"],\"name\":\"Wallpad Bridge\",\"model\":\"ESP8266 RS485\",\"manufacturer\":\"EveryX\",\"sw_version\":\"1.0.0\"}";
 
   int successCount = 0;
 
-  // 1. Light 엔티티 (거실, 침실, 주방 등 - 예시로 4개)
-  for (int i = 1; i <= 4; i++)
+  // 1. Light 엔티티 (거실조명1, 거실조명2, 3Way 조명)
+  const char *lightNames[] = {"거실조명1", "거실조명2", "3Way 조명"};
+  for (int i = 1; i <= 3; i++)
   {
     if (ESP.getFreeHeap() < 12000)
       break;
 
     String lightId = "wallpad_light_" + String(i);
-    String lightName = "Light " + String(i);
+    String lightName = lightNames[i - 1];
 
     String config = "{";
     config += "\"name\":\"" + lightName + "\",";
@@ -436,11 +570,11 @@ void publishDiscovery()
     delay(100);
   }
 
-  // 2. Fan 엔티티
+  // 2. Fan 엔티티 (환기)
   if (ESP.getFreeHeap() > 12000)
   {
     String config = "{";
-    config += "\"name\":\"Ventilation Fan\",";
+    config += "\"name\":\"환기\",";
     config += "\"unique_id\":\"wallpad_fan\",";
     config += "\"state_topic\":\"home/wallpad/fan/state\",";
     config += "\"command_topic\":\"home/wallpad/fan/set\",";
@@ -456,11 +590,11 @@ void publishDiscovery()
     delay(100);
   }
 
-  // 3. Door Lock 엔티티
+  // 3. Door Lock 엔티티 (현관 도어락)
   if (ESP.getFreeHeap() > 12000)
   {
     String config = "{";
-    config += "\"name\":\"Door Lock\",";
+    config += "\"name\":\"현관 도어락\",";
     config += "\"unique_id\":\"wallpad_doorlock\",";
     config += "\"state_topic\":\"home/wallpad/doorlock/state\",";
     config += "\"command_topic\":\"home/wallpad/set\",";
@@ -477,14 +611,15 @@ void publishDiscovery()
     delay(100);
   }
 
-  // 4. Climate 엔티티 (거실, 침실 등 - 예시로 2개)
-  for (int i = 1; i <= 2; i++)
+  // 4. Climate 엔티티 (거실 난방, 방1 난방, 방2 난방, 방3 난방)
+  const char *climateNames[] = {"거실 난방", "방1 난방", "방2 난방", "방3 난방"};
+  for (int i = 1; i <= 4; i++)
   {
     if (ESP.getFreeHeap() < 12000)
       break;
 
     String climateId = "wallpad_climate_" + String(i);
-    String climateName = "Thermostat " + String(i);
+    String climateName = climateNames[i - 1];
     uint8_t roomAddr = 0x10 + i;
 
     String config = "{";
@@ -501,6 +636,8 @@ void publishDiscovery()
     config += "\"temperature_command_template\":\"{\\\"device\\\":\\\"climate\\\",\\\"room\\\":" + String(roomAddr) + ",\\\"target_temp\\\":{{ value }}}\",";
     config += "\"current_temperature_topic\":\"home/wallpad/climate/" + String(i) + "/state\",";
     config += "\"current_temperature_template\":\"{{ value_json.current_temp }}\",";
+    config += "\"temperature_unit\":\"C\",";
+    config += "\"precision\":1.0,";
     config += "\"min_temp\":15,";
     config += "\"max_temp\":30,";
     config += "\"temp_step\":1";
@@ -547,17 +684,30 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
 {
   if (t == WS_EVT_CONNECT)
   {
-    Serial.printf("[WS] Client #%u connected\n", c->id());
+    Serial.printf("[WS] Client #%u connected from IP: %s\n", c->id(), c->remoteIP().toString().c_str());
+    Serial.printf("[WS] Total clients: %u\n", ws.count());
+
     // 최대 3개 클라이언트로 제한
     if (ws.count() > 3)
     {
-      Serial.println("[WS] Too many clients, closing oldest");
-      c->close();
+      Serial.printf("[WS] Max clients (3) reached, closing new connection #%u\n", c->id());
+      c->close(1008, "Max connections reached");
+      return;
     }
   }
   else if (t == WS_EVT_DISCONNECT)
   {
     Serial.printf("[WS] Client #%u disconnected\n", c->id());
+    Serial.printf("[WS] Total clients: %u\n", ws.count());
+  }
+  else if (t == WS_EVT_ERROR)
+  {
+    Serial.printf("[WS] Client #%u error: %u\n", c->id(), *((uint16_t *)arg));
+  }
+  else if (t == WS_EVT_PONG)
+  {
+    // Pong 응답 (연결 유지 확인)
+    // 로그 생략 (너무 많음)
   }
   else if (t == WS_EVT_DATA)
   {
@@ -569,7 +719,6 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
     }
     // 웹 UI에서 수신한 데이터를 RS485로 전송
     rs485.write(data, len);
-    Serial.println("WebSocket TX: " + String(len) + " bytes");
   }
 }
 
@@ -630,97 +779,75 @@ void setup()
     WiFi.persistent(true);
   }
 
-  // WebServer 엔드포인트들 (파일 시스템 보호 추가)
+  // WebServer 엔드포인트들
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
-              if (fileSystemBusy || millis() - lastFileAccess < FILE_ACCESS_DELAY) {
-                r->send(503, "text/plain", "Server busy, try again");
-                return;
-              }
-              fileSystemBusy = true;
-              lastFileAccess = millis();
+              // 정적 파일 읽기는 fileSystemBusy 체크 불필요
               if (LittleFS.exists("/index.htm")) {
                 r->send(LittleFS, "/index.htm", "text/html");
               } else {
                 r->send(404, "text/plain", "File not found");
-              }
-              fileSystemBusy = false; });
+              } });
 
   server.on("/monitor.htm", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
-              if (fileSystemBusy || millis() - lastFileAccess < FILE_ACCESS_DELAY) {
-                r->send(503, "text/plain", "Server busy, try again");
-                return;
-              }
-              fileSystemBusy = true;
-              lastFileAccess = millis();
+              // 정적 파일 읽기는 fileSystemBusy 체크 불필요
               if (LittleFS.exists("/monitor.htm")) {
                 r->send(LittleFS, "/monitor.htm", "text/html");
               } else {
                 r->send(404, "text/plain", "File not found");
-              }
-              fileSystemBusy = false; });
+              } });
 
+  // WiFi 설정은 config.htm으로 통합
   server.on("/wifi.htm", HTTP_GET, [](AsyncWebServerRequest *r)
-            { 
-              if (fileSystemBusy || millis() - lastFileAccess < FILE_ACCESS_DELAY) {
-                r->send(503, "text/plain", "Server busy, try again");
-                return;
-              }
-              fileSystemBusy = true;
-              lastFileAccess = millis();
-              if (LittleFS.exists("/wifi.htm")) {
-                r->send(LittleFS, "/wifi.htm", "text/html");
-              } else {
-                r->send(404, "text/plain", "File not found");
-              }
-              fileSystemBusy = false; });
+            { r->redirect("/config.htm"); });
 
   server.on("/config.htm", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
-              if (fileSystemBusy || millis() - lastFileAccess < FILE_ACCESS_DELAY) {
-                r->send(503, "text/plain", "Server busy, try again");
-                return;
-              }
-              fileSystemBusy = true;
-              lastFileAccess = millis();
+              // 정적 파일 읽기는 fileSystemBusy 체크 불필요
               if (LittleFS.exists("/config.htm")) {
                 r->send(LittleFS, "/config.htm", "text/html");
               } else {
                 r->send(404, "text/plain", "File not found");
-              }
-              fileSystemBusy = false; });
+              } });
 
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
-              if (fileSystemBusy || millis() - lastFileAccess < FILE_ACCESS_DELAY) {
-                r->send(503, "text/plain", "Server busy, try again");
-                return;
-              }
-              fileSystemBusy = true;
-              lastFileAccess = millis();
+              // 정적 파일 읽기는 fileSystemBusy 체크 불필요
               if (LittleFS.exists("/style.css")) {
                 r->send(LittleFS, "/style.css", "text/css");
               } else {
                 r->send(404, "text/plain", "File not found");
-              }
-              fileSystemBusy = false; });
+              } });
 
   // WiFi 스캔 (캐시된 결과 반환, 메모리 체크 추가)
   server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *r)
             {
+    Serial.println("[SCAN] /scan endpoint called");
+    
     // 메모리 부족 시 스캔 거부
     if (ESP.getFreeHeap() < 15000) {
+      Serial.println("[SCAN] Low memory, rejecting scan");
       r->send(503, "application/json", "{\"error\":\"Low memory\"}");
       return;
     }
     
     // 캐시된 결과 반환
+    Serial.print("[SCAN] Returning cached results: ");
+    Serial.println(cachedScanResults);
     r->send(200, "application/json", cachedScanResults);
     
     // 스캔이 진행 중이 아니고 파일 시스템이 바쁘지 않으면 백그라운드에서 새로운 스캔 시작
     if (!scanInProgress && !fileSystemBusy && ESP.getFreeHeap() > 20000) {
+      Serial.println("[SCAN] Triggering background scan");
       performWiFiScan();
+    } else {
+      Serial.print("[SCAN] Not starting scan - scanInProgress: ");
+      Serial.print(scanInProgress);
+      Serial.print(", fileSystemBusy: ");
+      Serial.print(fileSystemBusy);
+      Serial.print(", heap: ");
+      Serial.println(ESP.getFreeHeap());
     } });
 
   // WiFi 상태
@@ -793,19 +920,23 @@ void setup()
     
     fileSystemBusy = true;
     Serial.println("[CONFIG] WiFi reset");
-    yield();
     
     if (LittleFS.exists(configPath))
     {
-      if (!LittleFS.remove(configPath))
-      {
-        Serial.println("[CONFIG] ERROR: Failed to delete config");
-      }
+      LittleFS.remove(configPath);
     }
     
     fileSystemBusy = false;
     
     r->send(200, "text/plain", "Reset. Rebooting...");
+    shouldReboot = true;
+    rebootScheduledTime = millis(); });
+
+  // 재부팅 (설정 유지)
+  server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *r)
+            {
+    Serial.println("[SYSTEM] Reboot requested");
+    r->send(200, "text/plain", "Rebooting...");
     shouldReboot = true;
     rebootScheduledTime = millis(); });
 
@@ -981,7 +1112,6 @@ void setup()
     if (r->hasArg("data")) {
       fileSystemBusy = true;
       String presetData = r->arg("data");
-      yield();
       File f = LittleFS.open("/preset.json", "w");
       if (f) {
         f.print(presetData);
@@ -991,7 +1121,6 @@ void setup()
         r->send(500, "text/plain", "Failed to save preset");
       }
       fileSystemBusy = false;
-      yield();
     } else {
       r->send(400, "text/plain", "Missing data");
     } });
@@ -1015,29 +1144,17 @@ void setup()
     
     fileSystemBusy = false; });
 
+  // WebSocket 설정
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.begin();
 
   Serial.println("[WEB] Web server started");
 
-  // MQTT 설정 (Station 모드이고 WiFi 연결된 경우만)
+  // MQTT 설정 (연결은 loop()에서 처리 - setup blocking 방지)
   mqtt.setServer(mqtt_server.c_str(), mqtt_port);
   mqtt.setCallback(mqttCallback);
-  mqtt.setBufferSize(512);
-
-  if (!isAPMode && WiFi.isConnected())
-  {
-    if (connectMQTT())
-    {
-      delay(500);
-      publishDiscovery();
-    }
-  }
-  else
-  {
-    Serial.println("[MQTT] Skipping MQTT setup (AP mode or WiFi not connected)");
-  }
+  mqtt.setBufferSize(1024); // Climate discovery 메시지가 길어서 버퍼 크기 증가
 
   // Watchdog 타이머 시작 (30초마다)
   watchdogTicker.attach(30, watchdogCallback);
@@ -1120,15 +1237,51 @@ void loop()
 
   static unsigned long lastBinarySensorCheck = 0;
   static unsigned long lastMqttReconnect = 0;
+  static bool discoveryPublished = false;
 
   // MQTT 연결 유지 (AP 모드가 아니고 WiFi 연결된 경우만)
-  if (!isAPMode && WiFi.isConnected() && !mqtt.connected())
+  // 부팅 직후 20초 딜레이 추가 (웹 서버 완전 정상화 후)
+  if (!isAPMode && WiFi.isConnected() && !mqtt.connected() && millis() > 20000)
   {
     if (millis() - lastMqttReconnect > 5000)
     {
       lastMqttReconnect = millis();
       yield();
-      connectMQTT();
+      Serial.println("[MQTT] Attempting connection from loop()...");
+      if (connectMQTT())
+      {
+        discoveryPublished = false; // 재연결 시 Discovery 다시 발행 준비
+      }
+    }
+  }
+
+  // Discovery 발행 (MQTT 연결 후, 백그라운드에서 천천히)
+  // 여러 loop 사이클에 분산하여 blocking 최소화
+  static int discoveryIndex = 0;
+  static unsigned long lastDiscoveryTime = 0;
+
+  if (!discoveryPublished && mqtt.connected())
+  {
+    // 200ms마다 1개씩 발행 (비동기 느낌)
+    if (millis() - lastDiscoveryTime > 200)
+    {
+      lastDiscoveryTime = millis();
+
+      if (publishDiscoveryEntity(discoveryIndex))
+      {
+        discoveryIndex++;
+        if (discoveryIndex >= 12) // 총 12개 엔티티 (Light 3 + Fan 1 + Lock 1 + Climate 4 + Binary 3)
+        {
+          Serial.println("[DISCOVERY] All entities published!");
+          discoveryPublished = true;
+          discoveryIndex = 0;
+        }
+      }
+      else
+      {
+        // 발행 실패 시 다음번에 재시도
+        Serial.printf("[DISCOVERY] Entity %d publish failed, retry next loop\n", discoveryIndex);
+      }
     }
   }
 
@@ -1228,6 +1381,7 @@ void loop()
   }
 
   // Binary 센서 체크 (1초마다)
+  static unsigned long lastWsPing = 0;
   if (millis() - lastBinarySensorCheck > 1000)
   {
     lastBinarySensorCheck = millis();
@@ -1235,8 +1389,19 @@ void loop()
     {
       checkBinarySensors();
     }
+
+    // WebSocket ping (30초마다)
+    if (millis() - lastWsPing > 30000)
+    {
+      lastWsPing = millis();
+      if (ws.count() > 0)
+      {
+        ws.pingAll();
+        Serial.printf("[WS] Ping sent to %u clients\n", ws.count());
+      }
+    }
   }
 
-  // WebSocket 클린업
+  // WebSocket 클린업 (죽은 연결 제거)
   ws.cleanupClients();
 }

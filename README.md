@@ -40,11 +40,11 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 ### 3.3 Home Assistant 연동
 
 - **MQTT Discovery**: 재부팅 시 자동으로 장치 등록 메시지 발행
-  - Light 엔티티 4개 (거실, 침실, 주방 등)
+  - Light 엔티티 3개 (거실1 거실2, 3way)
   - Fan 엔티티 (속도 제어 1-3단)
   - Door Lock 엔티티
-  - Climate 엔티티 2개 (온도조절기, 모드/온도 제어)
-  - Binary Sensor 엔티티 3개
+  - Climate 엔티티 4개 (온도조절기 4개(거실, 안방, 작은방1, 작은방2), 모드/온도 제어)
+  - Binary Sensor 엔티티 3개 (현관문 센서, 동작감지센서, 예비)
   - Device 정보 포함 (식별자, 모델명, 제조사, 버전)
 - **가용성 관리**: LWT(Last Will and Testament)를 통한 온라인/오프라인 상태 실시간 모니터링
 - **상태 동기화**: RS485 장치 상태 변경 시 즉시 MQTT 발행 (변경 감지 기반)
@@ -52,12 +52,31 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 ### 3.4 시스템 안정성
 
 - **Watchdog 타이머**: WiFi/MQTT 연결 상태 감시 (30초 주기)
-- **메모리 모니터링**: 10초마다 힙 메모리 체크, 8KB 이하 시 경고
+- **메모리 모니터링**: 10초마다 힙 메모리 체크, 10KB 이하 시 경고
 - **자동 재연결**: WiFi 연결 끊김 시 자동 재시도 (3회 실패 시 재부팅)
 - **안전한 재부팅**: HTTP 응답 완료 후 지연 재부팅 (Exception 방지)
 - **WDT 리셋 방지**: 비동기 WiFi 스캔, Ticker ISR 안전성 확보
 
-### 3.5 RS485 통신 규격
+### 3.5 성능 최적화
+
+- **WiFi 스캔 최적화**:
+  - Hidden SSID 스캔 제외로 스캔 시간 10배 단축
+  - 비동기 스캔으로 UI blocking 제거
+  - scanDelete()로 메모리 효율성 개선
+- **WebSocket 즉시 연결**:
+  - monitor.htm의 script를 body 끝으로 이동하여 HTML 파싱 blocking 제거
+  - CSS 외부 파일화로 페이지 크기 26% 감소
+  - 페이지 전환 시 WebSocket 정리 로직 개선 (다중 이벤트 리스너)
+  - 연결 시간: 8초 → 20ms (400배 개선)
+- **백엔드 비동기 처리**:
+  - MQTT 연결을 부팅 20초 후로 지연 (웹 서버 우선 응답)
+  - Discovery를 200ms 간격으로 분산 발행 (blocking 최소화)
+  - MQTT 버퍼 크기 1024바이트로 확대 (Climate discovery 메시지 지원)
+- **파일 시스템 접근 최적화**:
+  - 정적 파일 서빙 시 fileSystemBusy 체크 제거 (읽기 전용은 안전)
+  - 동시 요청 처리 개선
+
+### 3.6 RS485 통신 규격
 
 프로토콜 상세 명세는 [wallpad_protocol.md](./wallpad_protocol.md) 참조
 
