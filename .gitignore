@@ -4,3 +4,8 @@
 .vscode/launch.json
 .vscode/ipch
 .ds_store
+
+# 민감정보 (로컬 설정)
+src/credentials.h
+config.json
+preset.json
