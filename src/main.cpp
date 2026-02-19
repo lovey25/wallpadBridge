@@ -22,12 +22,12 @@ PubSubClient mqtt(espClient);
 Ticker watchdogTicker;
 
 const char *configPath = "/config.json";
-String wifi_ssid = "";              // WiFi SSID
-String wifi_pass = "";              // WiFi Password
-String mqtt_server = "10.11.85.10"; // 초기값
-String mqtt_user = "homeassistant";
-String mqtt_pass = "1234";
-int mqtt_port = 1883; // MQTT 표준 포트 (8485에서 변경)
+String wifi_ssid = WIFI_SSID;     // WiFi SSID
+String wifi_pass = WIFI_PASS;     // WiFi Password
+String mqtt_server = MQTT_SERVER; // MQTT 서버 (credentials.h에서 로드)
+String mqtt_user = MQTT_USER;     // MQTT 사용자 (credentials.h에서 로드)
+String mqtt_pass = MQTT_PASS;     // MQTT 비밀번호 (credentials.h에서 로드)
+int mqtt_port = MQTT_PORT;        // MQTT 포트 (credentials.h에서 로드)
 
 // RS485 프로토콜 엔진
 RS485Parser parser;
