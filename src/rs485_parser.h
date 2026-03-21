@@ -39,6 +39,10 @@ struct RS485Frame
   uint8_t dataLength;
   uint8_t checksum;
   uint8_t suffix;
+  uint8_t raw[32];
+  uint8_t rawLength;
+  bool lengthValid;
+  bool checksumValid;
   bool valid;
 };
 
@@ -86,6 +90,7 @@ public:
   RS485Frame parseFrame()
   {
     RS485Frame frame;
+    memset(&frame, 0, sizeof(frame));
     frame.valid = false;
 
     if (!frameReady || bufferIndex < MIN_FRAME_SIZE)
@@ -93,6 +98,10 @@ public:
       reset();
       return frame;
     }
+
+    // 원본 프레임 보존 (디버깅/모니터링용)
+    frame.rawLength = (bufferIndex > 32) ? 32 : bufferIndex;
+    memcpy(frame.raw, buffer, frame.rawLength);
 
     // 기본 구조 검증
     if (buffer[0] != FRAME_PREFIX || buffer[bufferIndex - 1] != FRAME_SUFFIX)
@@ -107,8 +116,13 @@ public:
     frame.deviceType = buffer[3];
     frame.command = buffer[4];
 
-    // Length 검증 (Prefix 제외한 나머지 길이)
-    if (frame.length != bufferIndex - 2)
+    // Length 검증
+    // 프로토콜 문서 기준 length는 프레임 전체 길이(예: 0x0B=11, 0x0D=13)로 사용됨.
+    // 기존 구현과의 호환을 위해 (전체 길이-2) 포맷도 허용한다.
+    bool lengthMatchesTotal = (frame.length == bufferIndex);
+    bool lengthMatchesLegacy = (frame.length == bufferIndex - 2);
+    frame.lengthValid = (lengthMatchesTotal || lengthMatchesLegacy);
+    if (!frame.lengthValid)
     {
       reset();
       return frame;
@@ -119,8 +133,8 @@ public:
     {
       frame.deviceAddress = buffer[5];
 
-      // 데이터 길이 계산: 전체 - (Prefix + Length + Device + Cmd + DevAddr + Checksum + Suffix)
-      int dataLen = bufferIndex - 7;
+      // 데이터 길이 계산: 전체 - (Prefix + Length + Fixed + Device + Cmd + DevAddr + Checksum + Suffix)
+      int dataLen = bufferIndex - 8;
       if (dataLen > 0 && dataLen <= 16)
       {
         frame.dataLength = dataLen;
@@ -137,8 +151,13 @@ public:
 
     // Checksum 검증 (Prefix 제외, Checksum과 Suffix 제외)
     uint8_t calculatedChecksum = Checksum::xorSum(&buffer[1], bufferIndex - 3);
+    uint8_t calculatedChecksumWithPrefix = (uint8_t)(FRAME_PREFIX ^ calculatedChecksum);
 
-    if (calculatedChecksum == frame.checksum)
+    frame.checksumValid =
+        (calculatedChecksum == frame.checksum) ||
+        (calculatedChecksumWithPrefix == frame.checksum);
+
+    if (frame.checksumValid)
     {
       frame.valid = true;
     }

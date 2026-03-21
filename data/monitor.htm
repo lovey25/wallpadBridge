@@ -68,6 +68,46 @@
       let autoScroll = true;
       let filters = { rx: true, tx: true, state: true, error: true };
       let reconnectTimer = null;
+      let reconnectDelayMs = 1000;
+      let connectTimeoutTimer = null;
+      let monitorPingTimer = null;
+
+      function sendMonitorPing() {
+        fetch("/api/monitor/ping", {
+          method: "POST",
+          cache: "no-store",
+          keepalive: true,
+        }).catch(() => {
+          // 네트워크 에러는 웹소켓 재연결 로직이 처리
+        });
+      }
+
+      function startMonitorSession() {
+        sendMonitorPing();
+        if (monitorPingTimer) {
+          clearInterval(monitorPingTimer);
+        }
+        monitorPingTimer = setInterval(sendMonitorPing, 4000);
+      }
+
+      function stopMonitorSession() {
+        if (monitorPingTimer) {
+          clearInterval(monitorPingTimer);
+          monitorPingTimer = null;
+        }
+
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon("/api/monitor/leave");
+        } else {
+          fetch("/api/monitor/leave", { method: "POST", keepalive: true }).catch(() => {});
+        }
+      }
+
+      function getWebSocketUrl() {
+        const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+        const wsHost = window.location.host || window.location.hostname;
+        return `${wsProto}://${wsHost}/ws`;
+      }
 
       function connectWebSocket() {
         // 기존 연결이 있으면 먼저 정리
@@ -85,27 +125,49 @@
           reconnectTimer = null;
         }
 
-        const gateway = `ws://${window.location.hostname}/ws`;
+        const gateway = getWebSocketUrl();
         console.log("[WS] Connecting to:", gateway);
         websocket = new WebSocket(gateway);
 
+        // CONNECTING 상태가 오래 지속되면 강제로 닫고 빠르게 재시도
+        connectTimeoutTimer = setTimeout(() => {
+          if (websocket && websocket.readyState === WebSocket.CONNECTING) {
+            console.warn("[WS] Connect timeout, forcing reconnect");
+            websocket.close();
+          }
+        }, 4000);
+
         websocket.onopen = function () {
           console.log("[WS] ✅ Connected successfully");
+          reconnectDelayMs = 1000;
+          if (connectTimeoutTimer) {
+            clearTimeout(connectTimeoutTimer);
+            connectTimeoutTimer = null;
+          }
           updateWSStatus(true);
           addLog("WebSocket 연결됨", "log-state");
         };
 
         websocket.onclose = function () {
-          console.log("[WS] ❌ Connection closed, reconnecting in 5s...");
+          if (connectTimeoutTimer) {
+            clearTimeout(connectTimeoutTimer);
+            connectTimeoutTimer = null;
+          }
+          console.log(`[WS] ❌ Connection closed, reconnecting in ${reconnectDelayMs}ms...`);
           updateWSStatus(false);
-          addLog("WebSocket 연결 끊김. 5초 후 재연결...", "log-error");
+          addLog(`WebSocket 연결 끊김. ${Math.round(reconnectDelayMs / 1000)}초 후 재연결...`, "log-error");
 
           // 재연결 타이머 설정
           if (reconnectTimer) clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(connectWebSocket, 5000);
+          reconnectTimer = setTimeout(connectWebSocket, reconnectDelayMs);
+          reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
         };
 
         websocket.onerror = function (error) {
+          if (connectTimeoutTimer) {
+            clearTimeout(connectTimeoutTimer);
+            connectTimeoutTimer = null;
+          }
           console.error("[WS] ❌ Error:", error);
           addLog("WebSocket 에러: " + error, "log-error");
         };
@@ -135,9 +197,15 @@
       // WebSocket 정리 함수
       function cleanupWebSocket() {
         console.log("[MONITOR] Cleaning up WebSocket");
+        stopMonitorSession();
+
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
+        }
+        if (connectTimeoutTimer) {
+          clearTimeout(connectTimeoutTimer);
+          connectTimeoutTimer = null;
         }
         if (websocket) {
           if (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING) {
@@ -250,6 +318,9 @@
       // Enter 키로 전송 및 WebSocket 연결 시작
       document.addEventListener("DOMContentLoaded", function () {
         console.log("[MONITOR] DOM ready, starting WebSocket and attaching event listeners");
+
+        // 서버에 모니터 활성 상태를 먼저 알림
+        startMonitorSession();
 
         // WebSocket 즉시 연결
         connectWebSocket();

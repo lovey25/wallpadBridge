@@ -12,7 +12,7 @@ public:
   static size_t buildLightQuery(uint8_t address, uint8_t *buffer, size_t bufferSize)
   {
     // REQ: F7 0B 01 19 01 40 AA 00 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     buffer[0] = 0xF7;                            // Prefix
@@ -23,10 +23,11 @@ public:
     buffer[5] = 0x40;                            // Fixed
     buffer[6] = address;                         // Light address
     buffer[7] = 0x00;                            // Data
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 조명 제어 명령 생성 (ON/OFF)
@@ -34,7 +35,7 @@ public:
   {
     // ON  REQ: F7 0B 01 19 02 40 AA 01 [CRC] EE
     // OFF REQ: F7 0B 01 19 02 40 AA 02 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     buffer[0] = 0xF7;                            // Prefix
@@ -45,17 +46,18 @@ public:
     buffer[5] = 0x40;                            // Fixed
     buffer[6] = address;                         // Light address
     buffer[7] = turnOn ? 0x01 : 0x02;            // 01=ON, 02=OFF
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 환기 상태 조회 명령 생성
   static size_t buildFanQuery(uint8_t *buffer, size_t bufferSize)
   {
     // REQ: F7 0B 01 2B 01 40 11 00 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     buffer[0] = 0xF7;                            // Prefix
@@ -66,10 +68,11 @@ public:
     buffer[5] = 0x40;                            // Fixed
     buffer[6] = 0x11;                            // Fan address
     buffer[7] = 0x00;                            // Data
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 환기 전원 제어 명령 생성
@@ -77,7 +80,7 @@ public:
   {
     // OFF REQ: F7 0B 01 2B 02 40 11 02 [CRC] EE
     // ON  REQ: F7 0B 01 2B 02 42 11 01 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     buffer[0] = 0xF7;                            // Prefix
@@ -88,10 +91,11 @@ public:
     buffer[5] = turnOn ? 0x42 : 0x40;            // 42=ON, 40=OFF
     buffer[6] = 0x11;                            // Fan address
     buffer[7] = turnOn ? 0x01 : 0x02;            // 01=ON, 02=OFF
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 환기 풍량 제어 명령 생성
@@ -100,7 +104,7 @@ public:
     // LOW  : F7 0B 01 2B 02 42 11 01 [CRC] EE
     // MED  : F7 0B 01 2B 02 42 11 03 [CRC] EE
     // HIGH : F7 0B 01 2B 02 42 11 07 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     // speed: 1=LOW, 3=MEDIUM, 7=HIGH
@@ -117,10 +121,11 @@ public:
     buffer[5] = 0x42;                            // Fixed (ON 상태)
     buffer[6] = 0x11;                            // Fan address
     buffer[7] = speed;                           // Speed value
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 도어락 열림 명령 생성
@@ -152,7 +157,7 @@ public:
   static size_t buildClimateQuery(uint8_t roomAddress, uint8_t *buffer, size_t bufferSize)
   {
     // REQ: F7 0B 01 18 01 45 RR 00 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     buffer[0] = 0xF7;                            // Prefix
@@ -163,10 +168,11 @@ public:
     buffer[5] = 0x45;                            // Fixed
     buffer[6] = roomAddress;                     // Room address (11=거실, 12=방1, 13=방2, 14=방3)
     buffer[7] = 0x00;                            // Data
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 난방 모드 제어 명령 생성
@@ -175,7 +181,7 @@ public:
     // HEAT REQ: F7 0B 01 18 02 46 RR 01 [CRC] EE
     // OFF  REQ: F7 0B 01 18 02 46 RR 04 [CRC] EE
     // AWAY REQ: F7 0B 01 18 02 46 RR 07 [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     // mode: 1=HEAT, 4=OFF, 7=AWAY
@@ -192,17 +198,18 @@ public:
     buffer[5] = 0x46;                            // Fixed
     buffer[6] = roomAddress;                     // Room address
     buffer[7] = mode;                            // Mode value
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 난방 온도 설정 명령 생성
   static size_t buildClimateTempControl(uint8_t roomAddress, uint8_t targetTemp, uint8_t *buffer, size_t bufferSize)
   {
     // REQ: F7 0B 01 18 02 45 RR TT [CRC] EE
-    if (bufferSize < 10)
+    if (bufferSize < 11)
       return 0;
 
     // 온도 범위 제한 (5~40도)
@@ -219,10 +226,11 @@ public:
     buffer[5] = 0x45;                            // Fixed
     buffer[6] = roomAddress;                     // Room address
     buffer[7] = targetTemp;                      // Target temperature
-    buffer[8] = Checksum::xorSum(&buffer[1], 7); // Checksum
-    buffer[9] = 0xEE;                            // Suffix
+    buffer[8] = 0x00;                            // Reserved/Padding
+    buffer[9] = Checksum::xorSum(&buffer[1], 8); // Checksum
+    buffer[10] = 0xEE;                           // Suffix
 
-    return 10;
+    return 11;
   }
 
   // 버퍼를 Hex 문자열로 변환 (디버깅용)

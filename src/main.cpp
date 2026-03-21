@@ -5,8 +5,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
-#include <SoftwareSerial.h>
 #include <Ticker.h>
+#include <SoftwareSerial.h>
 #include "checksum.h"
 #include "rs485_parser.h"
 #include "device_decoder.h"
@@ -14,7 +14,10 @@
 #include "command_builder.h"
 
 // 설정
-SoftwareSerial rs485(D2, D1); // RX, TX
+// RS485는 SoftwareSerial(D2=RX, D1=TX) 사용
+SoftwareSerial rs485(D2, D1);
+const uint8_t MAX_WS_CLIENTS = 8;
+const uint32_t WS_MEMORY_GUARD_THRESHOLD = 15000;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 WiFiClient espClient;
@@ -44,6 +47,11 @@ bool binarySensor3 = false;
 // WiFi 스캔 결과 캐시
 String cachedScanResults = "[]";
 bool scanInProgress = false;
+// 모니터 페이지 활성 상태 추적 (웹소켓 연결 우선 제어)
+const bool ENABLE_MONITOR_PRIORITY = false;
+bool monitorSessionActive = false;
+unsigned long lastMonitorActivityMs = 0;
+const unsigned long MONITOR_ACTIVE_TTL_MS = 15000;
 // 파일 시스템 접근 보호
 bool fileSystemBusy = false;
 unsigned long lastFileAccess = 0;
@@ -67,19 +75,56 @@ const int MAX_WIFI_RECONNECT_ATTEMPTS = 3; // 3회 실패 시 리부팅
 // 재부팅 플래그 (HTTP 응답 완료 후 안전하게 재부팅)
 bool shouldReboot = false;
 unsigned long rebootScheduledTime = 0;
+
+bool isMonitorSessionActive()
+{
+  if (!ENABLE_MONITOR_PRIORITY)
+    return false;
+
+  if (!monitorSessionActive)
+    return false;
+
+  // millis overflow-safe 비교
+  unsigned long elapsed = millis() - lastMonitorActivityMs;
+  if (elapsed > MONITOR_ACTIVE_TTL_MS)
+  {
+    monitorSessionActive = false;
+    return false;
+  }
+
+  return true;
+}
+
+void markMonitorSessionActive()
+{
+  if (!ENABLE_MONITOR_PRIORITY)
+    return;
+
+  monitorSessionActive = true;
+  lastMonitorActivityMs = millis();
+}
+
+void markMonitorSessionInactive()
+{
+  if (!ENABLE_MONITOR_PRIORITY)
+    return;
+
+  monitorSessionActive = false;
+}
+
 // WiFi 설정 로드 함수
 void loadConfig()
 {
   if (!LittleFS.exists(configPath))
   {
-    Serial.println("[CONFIG] Using defaults");
+    // Serial.println("[CONFIG] Using defaults");
     return;
   }
 
   File f = LittleFS.open(configPath, "r");
   if (!f)
   {
-    Serial.println("[CONFIG] ERROR: Failed to open config.json");
+    // Serial.println("[CONFIG] ERROR: Failed to open config.json");
     return;
   }
 
@@ -89,7 +134,7 @@ void loadConfig()
 
   if (error)
   {
-    Serial.println("[CONFIG] ERROR: JSON parsing failed");
+    // Serial.println("[CONFIG] ERROR: JSON parsing failed");
     return;
   }
 
@@ -107,7 +152,7 @@ void loadConfig()
   if (doc.containsKey("mqtt_pass"))
     mqtt_pass = doc["mqtt_pass"].as<String>();
 
-  Serial.printf("[CONFIG] Loaded: %s, MQTT: %s:%d\n", wifi_ssid.c_str(), mqtt_server.c_str(), mqtt_port);
+  // Serial.printf("[CONFIG] Loaded: %s, MQTT: %s:%d\n", wifi_ssid.c_str(), mqtt_server.c_str(), mqtt_port);
 }
 
 // MQTT 콜백 함수 - MQTT로부터 명령 수신
@@ -169,7 +214,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
 
     if (error)
     {
-      Serial.println("[MQTT] JSON parse failed");
+      // Serial.println("[MQTT] JSON parse failed");
       return;
     }
 
@@ -232,7 +277,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
   {
     rs485.write(cmdBuffer, cmdLen);
     String hexCmd = CommandBuilder::toHexString(cmdBuffer, cmdLen);
-    Serial.println("[MQTT->RS485] TX: " + hexCmd);
+    // Serial.println("[MQTT->RS485] TX: " + hexCmd);
     if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
     {
       ws.textAll("TX: " + hexCmd);
@@ -240,7 +285,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
   }
   else
   {
-    Serial.println("[MQTT] No command generated");
+    // Serial.println("[MQTT] No command generated");
   }
 }
 
@@ -271,11 +316,11 @@ void performWiFiScan()
 {
   if (scanInProgress)
   {
-    Serial.println("[SCAN] Already in progress, skipping");
+    // Serial.println("[SCAN] Already in progress, skipping");
     return;
   }
 
-  Serial.println("[SCAN] Starting WiFi scan...");
+  // Serial.println("[SCAN] Starting WiFi scan...");
   scanInProgress = true;
 
   // 이전 스캔 결과 삭제
@@ -283,7 +328,7 @@ void performWiFiScan()
 
   // 비동기 스캔 시작 (non-blocking, hidden SSID 제외)
   WiFi.scanNetworks(true, false);
-  Serial.println("[SCAN] Scan initiated");
+  // Serial.println("[SCAN] Scan initiated");
 }
 
 // WiFi 스캔 완료 확인 및 결과 처리 (loop에서 호출)
@@ -303,9 +348,9 @@ void checkWiFiScanComplete()
   if (n >= 0)
   {
     // 스캔 완료 - 결과 처리
-    Serial.print("[SCAN] Scan complete, found ");
-    Serial.print(n);
-    Serial.println(" networks");
+    // Serial.print("[SCAN] Scan complete, found ");
+    // Serial.print(n);
+    // Serial.println(" networks");
 
     int maxNetworks = (n > 20) ? 20 : n;
 
@@ -325,28 +370,28 @@ void checkWiFiScanComplete()
     WiFi.scanDelete(); // 스캔 결과 메모리 해제
 
     // WebSocket으로 스캔 결과 브로드캐스트 (클라이언트 있고 메모리 충분할 때만)
-    Serial.print("[SCAN] WebSocket clients connected: ");
-    Serial.println(ws.count());
-    Serial.print("[SCAN] Free heap: ");
-    Serial.println(ESP.getFreeHeap());
+    // Serial.print("[SCAN] WebSocket clients connected: ");
+    // Serial.println(ws.count());
+    // Serial.print("[SCAN] Free heap: ");
+    // Serial.println(ESP.getFreeHeap());
 
     if (ws.count() > 0 && ESP.getFreeHeap() > 15000)
     {
       String wsMessage = "{\"type\":\"wifi_scan\",\"data\":" + json + "}";
-      Serial.println("[SCAN] Broadcasting results via WebSocket");
+      // Serial.println("[SCAN] Broadcasting results via WebSocket");
       ws.textAll(wsMessage);
-      Serial.println("[SCAN] Broadcast complete");
+      // Serial.println("[SCAN] Broadcast complete");
     }
     else
     {
-      Serial.println("[SCAN] Not broadcasting (no clients or low memory)");
+      // Serial.println("[SCAN] Not broadcasting (no clients or low memory)");
     }
   }
   else
   {
     // 스캔 실패
-    Serial.print("[SCAN] Scan failed with code: ");
-    Serial.println(n);
+    // Serial.print("[SCAN] Scan failed with code: ");
+    // Serial.println(n);
     cachedScanResults = "[]";
   }
 
@@ -384,7 +429,7 @@ bool connectMQTT()
   if (!WiFi.isConnected())
     return false;
 
-  Serial.printf("[MQTT] Connecting to %s:%d...\n", mqtt_server.c_str(), mqtt_port);
+  // Serial.printf("[MQTT] Connecting to %s:%d...\n", mqtt_server.c_str(), mqtt_port);
 
   bool connected = false;
   if (mqtt_user.length() > 0)
@@ -399,7 +444,7 @@ bool connectMQTT()
 
   if (connected)
   {
-    Serial.println("[MQTT] ✓ Connected");
+    // Serial.println("[MQTT] ✓ Connected");
     mqtt.subscribe("home/wallpad/set");
     mqtt.subscribe("home/wallpad/fan/set");
     mqtt.subscribe("home/wallpad/climate/1/set");
@@ -411,7 +456,7 @@ bool connectMQTT()
   }
   else
   {
-    Serial.printf("[MQTT] ✗ Failed (state: %d)\n", mqtt.state());
+    // Serial.printf("[MQTT] ✗ Failed (state: %d)\n", mqtt.state());
     return false;
   }
 }
@@ -434,7 +479,7 @@ bool publishDiscoveryEntity(int index)
     config += deviceInfo;
     config += "}";
     result = mqtt.publish("homeassistant/light/wallpad_light_1/config", config.c_str(), true);
-    Serial.println("[DISCOVERY] Published: Light 1");
+    // Serial.println("[DISCOVERY] Published: Light 1");
     break;
 
   case 1: // Light 2 (거실조명2)
@@ -442,7 +487,7 @@ bool publishDiscoveryEntity(int index)
     config += deviceInfo;
     config += "}";
     result = mqtt.publish("homeassistant/light/wallpad_light_2/config", config.c_str(), true);
-    Serial.println("[DISCOVERY] Published: Light 2");
+    // Serial.println("[DISCOVERY] Published: Light 2");
     break;
 
   case 2: // Light 3 (3Way 조명)
@@ -450,7 +495,7 @@ bool publishDiscoveryEntity(int index)
     config += deviceInfo;
     config += "}";
     result = mqtt.publish("homeassistant/light/wallpad_light_3/config", config.c_str(), true);
-    Serial.println("[DISCOVERY] Published: Light 3");
+    // Serial.println("[DISCOVERY] Published: Light 3");
     break;
 
   case 3: // Fan (환기)
@@ -458,7 +503,7 @@ bool publishDiscoveryEntity(int index)
     config += deviceInfo;
     config += "}";
     result = mqtt.publish("homeassistant/fan/wallpad_fan/config", config.c_str(), true);
-    Serial.println("[DISCOVERY] Published: Fan");
+    // Serial.println("[DISCOVERY] Published: Fan");
     break;
 
   case 4: // Door Lock
@@ -466,7 +511,7 @@ bool publishDiscoveryEntity(int index)
     config += deviceInfo;
     config += "}";
     result = mqtt.publish("homeassistant/lock/wallpad_doorlock/config", config.c_str(), true);
-    Serial.println("[DISCOVERY] Published: Door Lock");
+    // Serial.println("[DISCOVERY] Published: Door Lock");
     break;
 
   case 5: // Climate 1 (거실 난방)
@@ -501,7 +546,7 @@ bool publishDiscoveryEntity(int index)
 
     topic = "homeassistant/climate/wallpad_climate_" + String(climateNum) + "/config";
     result = mqtt.publish(topic.c_str(), config.c_str(), true);
-    Serial.printf("[DISCOVERY] Published: Climate %d\n", climateNum);
+    // Serial.printf("[DISCOVERY] Published: Climate %d\n", climateNum);
   }
   break;
 
@@ -516,7 +561,7 @@ bool publishDiscoveryEntity(int index)
 
     topic = "homeassistant/binary_sensor/wallpad_binary_" + String(sensorNum) + "/config";
     result = mqtt.publish(topic.c_str(), config.c_str(), true);
-    Serial.printf("[DISCOVERY] Published: Binary Sensor %d\n", sensorNum);
+    // Serial.printf("[DISCOVERY] Published: Binary Sensor %d\n", sensorNum);
   }
   break;
 
@@ -534,7 +579,7 @@ void publishDiscovery()
   if (!mqtt.connected())
     return;
 
-  Serial.println("[DISCOVERY] Publishing entities (legacy mode)...");
+  // Serial.println("[DISCOVERY] Publishing entities (legacy mode)...");
   yield();
 
   // Device 정보 (모든 엔티티에 공통)
@@ -677,32 +722,35 @@ void publishDiscovery()
     delay(100);
   }
 
-  Serial.printf("[DISCOVERY] ✓ Published %d entities\n", successCount);
+  // Serial.printf("[DISCOVERY] ✓ Published %d entities\n", successCount);
 }
 
 void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void *arg, uint8_t *data, size_t len)
 {
   if (t == WS_EVT_CONNECT)
   {
-    Serial.printf("[WS] Client #%u connected from IP: %s\n", c->id(), c->remoteIP().toString().c_str());
-    Serial.printf("[WS] Total clients: %u\n", ws.count());
+    // 연결 카운트 전에 stale 클라이언트 정리
+    ws.cleanupClients();
 
-    // 최대 3개 클라이언트로 제한
-    if (ws.count() > 3)
+    // Serial.printf("[WS] Client #%u connected from IP: %s\n", c->id(), c->remoteIP().toString().c_str());
+    // Serial.printf("[WS] Total clients: %u\n", ws.count());
+
+    // 메모리 부족 + 과다 접속일 때만 신규 연결 제한
+    if (ws.count() > MAX_WS_CLIENTS && ESP.getFreeHeap() < WS_MEMORY_GUARD_THRESHOLD)
     {
-      Serial.printf("[WS] Max clients (3) reached, closing new connection #%u\n", c->id());
+      // Serial.printf("[WS] Max clients (3) reached, closing new connection #%u\n", c->id());
       c->close(1008, "Max connections reached");
       return;
     }
   }
   else if (t == WS_EVT_DISCONNECT)
   {
-    Serial.printf("[WS] Client #%u disconnected\n", c->id());
-    Serial.printf("[WS] Total clients: %u\n", ws.count());
+    // Serial.printf("[WS] Client #%u disconnected\n", c->id());
+    // Serial.printf("[WS] Total clients: %u\n", ws.count());
   }
   else if (t == WS_EVT_ERROR)
   {
-    Serial.printf("[WS] Client #%u error: %u\n", c->id(), *((uint16_t *)arg));
+    // Serial.printf("[WS] Client #%u error: %u\n", c->id(), *((uint16_t *)arg));
   }
   else if (t == WS_EVT_PONG)
   {
@@ -714,7 +762,7 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
     // 데이터 크기 제한 (32바이트 이하만 허용)
     if (len > 32)
     {
-      Serial.printf("[WS] Data too large (%u bytes), ignoring\n", len);
+      // Serial.printf("[WS] Data too large (%u bytes), ignoring\n", len);
       return;
     }
     // 웹 UI에서 수신한 데이터를 RS485로 전송
@@ -724,18 +772,18 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
 
 void setup()
 {
-  Serial.begin(74880);
+  // RS485 SoftwareSerial 시작 (9600 baud)
   rs485.begin(9600);
 
   // LittleFS 초기화
-  Serial.println("\n=== Wallpad Bridge Starting ===");
+  // Serial.println("\n=== Wallpad Bridge Starting ==="); // 디버그 비활성화
   if (!LittleFS.begin())
   {
-    Serial.println("[FS] Formatting...");
+    // Serial.println("[FS] Formatting...");
     LittleFS.format();
     LittleFS.begin();
   }
-  Serial.println("[FS] ✓ Ready");
+  // Serial.println("[FS] ✓ Ready");
 
   // Binary 센서 핀 초기화
   pinMode(BINARY_PIN_1, INPUT_PULLUP);
@@ -747,7 +795,7 @@ void setup()
   // WiFi 연결 시도
   if (wifi_ssid.length() > 0)
   {
-    Serial.printf("[WIFI] Connecting to: %s\n", wifi_ssid.c_str());
+    // Serial.printf("[WIFI] Connecting to: %s\n", wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
 
@@ -760,20 +808,20 @@ void setup()
   }
   else
   {
-    Serial.println("[WIFI] No saved credentials");
+    // Serial.println("[WIFI] No saved credentials");
   }
 
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("[WIFI] Failed - Starting AP mode");
+    // Serial.println("[WIFI] Failed - Starting AP mode");
     WiFi.mode(WIFI_AP);
     WiFi.softAP("Wallpad_Setup", "12345678");
-    Serial.printf("[AP] SSID: Wallpad_Setup, IP: %s\n", WiFi.softAPIP().toString().c_str());
+    // Serial.printf("[AP] SSID: Wallpad_Setup, IP: %s\n", WiFi.softAPIP().toString().c_str());
     isAPMode = true;
   }
   else
   {
-    Serial.printf("[WIFI] ✓ Connected, IP: %s\n", WiFi.localIP().toString().c_str());
+    // Serial.printf("[WIFI] ✓ Connected, IP: %s\n", WiFi.localIP().toString().c_str());
     isAPMode = false;
     WiFi.setAutoReconnect(true);
     WiFi.persistent(true);
@@ -791,12 +839,27 @@ void setup()
 
   server.on("/monitor.htm", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
+              // 모니터 페이지 진입 시 웹소켓 우선 모드 시작
+              markMonitorSessionActive();
+
               // 정적 파일 읽기는 fileSystemBusy 체크 불필요
               if (LittleFS.exists("/monitor.htm")) {
                 r->send(LittleFS, "/monitor.htm", "text/html");
               } else {
                 r->send(404, "text/plain", "File not found");
               } });
+
+  // 모니터 페이지 활성 ping (웹소켓 우선 모드 유지)
+  server.on("/api/monitor/ping", HTTP_POST, [](AsyncWebServerRequest *r)
+            {
+              markMonitorSessionActive();
+              r->send(204); });
+
+  // 모니터 페이지 이탈 알림
+  server.on("/api/monitor/leave", HTTP_POST, [](AsyncWebServerRequest *r)
+            {
+              markMonitorSessionInactive();
+              r->send(204); });
 
   // WiFi 설정은 config.htm으로 통합
   server.on("/wifi.htm", HTTP_GET, [](AsyncWebServerRequest *r)
@@ -823,31 +886,31 @@ void setup()
   // WiFi 스캔 (캐시된 결과 반환, 메모리 체크 추가)
   server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *r)
             {
-    Serial.println("[SCAN] /scan endpoint called");
+    // Serial.println("[SCAN] /scan endpoint called");
     
     // 메모리 부족 시 스캔 거부
     if (ESP.getFreeHeap() < 15000) {
-      Serial.println("[SCAN] Low memory, rejecting scan");
+      // Serial.println("[SCAN] Low memory, rejecting scan");
       r->send(503, "application/json", "{\"error\":\"Low memory\"}");
       return;
     }
     
     // 캐시된 결과 반환
-    Serial.print("[SCAN] Returning cached results: ");
-    Serial.println(cachedScanResults);
+    // Serial.print("[SCAN] Returning cached results: ");
+    // Serial.println(cachedScanResults);
     r->send(200, "application/json", cachedScanResults);
     
     // 스캔이 진행 중이 아니고 파일 시스템이 바쁘지 않으면 백그라운드에서 새로운 스캔 시작
     if (!scanInProgress && !fileSystemBusy && ESP.getFreeHeap() > 20000) {
-      Serial.println("[SCAN] Triggering background scan");
+      // Serial.println("[SCAN] Triggering background scan");
       performWiFiScan();
     } else {
-      Serial.print("[SCAN] Not starting scan - scanInProgress: ");
-      Serial.print(scanInProgress);
-      Serial.print(", fileSystemBusy: ");
-      Serial.print(fileSystemBusy);
-      Serial.print(", heap: ");
-      Serial.println(ESP.getFreeHeap());
+      // Serial.print("[SCAN] Not starting scan - scanInProgress: ");
+      // Serial.print(scanInProgress);
+      // Serial.print(", fileSystemBusy: ");
+      // Serial.print(fileSystemBusy);
+      // Serial.print(", heap: ");
+      // Serial.println(ESP.getFreeHeap());
     } });
 
   // WiFi 상태
@@ -874,7 +937,7 @@ void setup()
         String ssid = r->arg("ssid");
         String pass = r->arg("pass");
         
-        Serial.printf("[CONFIG] Save WiFi: %s\n", ssid.c_str());
+        // Serial.printf("[CONFIG] Save WiFi: %s\n", ssid.c_str());
         
         if (!LittleFS.begin())
         {
@@ -903,7 +966,7 @@ void setup()
         f.close();
         
         fileSystemBusy = false;
-        Serial.println("[CONFIG] WiFi saved, rebooting...");
+        // Serial.println("[CONFIG] WiFi saved, rebooting...");
         
         r->send(200, "text/plain", "Configuration saved. Rebooting...");
         
@@ -919,7 +982,7 @@ void setup()
     }
     
     fileSystemBusy = true;
-    Serial.println("[CONFIG] WiFi reset");
+    // Serial.println("[CONFIG] WiFi reset");
     
     if (LittleFS.exists(configPath))
     {
@@ -935,7 +998,7 @@ void setup()
   // 재부팅 (설정 유지)
   server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *r)
             {
-    Serial.println("[SYSTEM] Reboot requested");
+    // Serial.println("[SYSTEM] Reboot requested");
     r->send(200, "text/plain", "Rebooting...");
     shouldReboot = true;
     rebootScheduledTime = millis(); });
@@ -1085,7 +1148,7 @@ void setup()
 
         fileSystemBusy = false;
 
-        Serial.println("[CONFIG] Settings saved");
+        // Serial.println("[CONFIG] Settings saved");
 
         // 응답 보내기
         r->send(200, "text/plain", "Configuration updated. Rebooting...");
@@ -1149,7 +1212,7 @@ void setup()
   server.addHandler(&ws);
   server.begin();
 
-  Serial.println("[WEB] Web server started");
+  // Serial.println("[WEB] Web server started");
 
   // MQTT 설정 (연결은 loop()에서 처리 - setup blocking 방지)
   mqtt.setServer(mqtt_server.c_str(), mqtt_port);
@@ -1159,7 +1222,7 @@ void setup()
   // Watchdog 타이머 시작 (30초마다)
   watchdogTicker.attach(30, watchdogCallback);
 
-  Serial.println("=== System Ready ===\n");
+  // Serial.println("=== System Ready ===\n");
 }
 
 void loop()
@@ -1167,8 +1230,8 @@ void loop()
   // 재부팅 예약 처리 (HTTP 응답 완료 후 안전하게 재부팅)
   if (shouldReboot && millis() - rebootScheduledTime >= 2000)
   {
-    Serial.println("[SYSTEM] Rebooting now...");
-    Serial.flush(); // 시리얼 버퍼 비우기
+    // Serial.println("[SYSTEM] Rebooting now...");
+    // Serial.flush(); // 시리얼 버퍼 비우기
     delay(100);
     ESP.restart();
   }
@@ -1180,7 +1243,7 @@ void loop()
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < MEMORY_WARNING_THRESHOLD)
     {
-      Serial.printf("[WARNING] Low memory: %u bytes\n", freeHeap);
+      // Serial.printf("[WARNING] Low memory: %u bytes\n", freeHeap);
       if (WiFi.status() == WL_CONNECTED && mqtt.connected())
       {
         char msg[64];
@@ -1196,12 +1259,12 @@ void loop()
     shouldCheckWifiConnection = false;
     wifiReconnectAttempts++;
 
-    Serial.printf("[WATCHDOG] WiFi disconnected (attempt %d/%d)\n",
-                  wifiReconnectAttempts, MAX_WIFI_RECONNECT_ATTEMPTS);
+    // Serial.printf("[WATCHDOG] WiFi disconnected (attempt %d/%d)\n",
+    //               wifiReconnectAttempts, MAX_WIFI_RECONNECT_ATTEMPTS);
 
     if (wifiReconnectAttempts >= MAX_WIFI_RECONNECT_ATTEMPTS)
     {
-      Serial.println("[WATCHDOG] Max reconnect attempts reached, restarting...");
+      // Serial.println("[WATCHDOG] Max reconnect attempts reached, restarting...");
       delay(100);
       ESP.restart();
     }
@@ -1216,7 +1279,7 @@ void loop()
     // WiFi 연결되면 카운터 리셋
     if (WiFi.status() == WL_CONNECTED && wifiReconnectAttempts > 0)
     {
-      Serial.println("[WATCHDOG] WiFi reconnected successfully");
+      // Serial.println("[WATCHDOG] WiFi reconnected successfully");
       wifiReconnectAttempts = 0;
     }
   }
@@ -1228,7 +1291,10 @@ void loop()
     // AP 모드에서는 MQTT 연결 시도 안 함
     if (!isAPMode)
     {
-      connectMQTT();
+      if (!isMonitorSessionActive())
+      {
+        connectMQTT();
+      }
     }
   }
 
@@ -1238,16 +1304,17 @@ void loop()
   static unsigned long lastBinarySensorCheck = 0;
   static unsigned long lastMqttReconnect = 0;
   static bool discoveryPublished = false;
+  bool monitorActive = isMonitorSessionActive();
 
   // MQTT 연결 유지 (AP 모드가 아니고 WiFi 연결된 경우만)
   // 부팅 직후 20초 딜레이 추가 (웹 서버 완전 정상화 후)
   if (!isAPMode && WiFi.isConnected() && !mqtt.connected() && millis() > 20000)
   {
-    if (millis() - lastMqttReconnect > 5000)
+    if (!monitorActive && millis() - lastMqttReconnect > 5000)
     {
       lastMqttReconnect = millis();
       yield();
-      Serial.println("[MQTT] Attempting connection from loop()...");
+      // Serial.println("[MQTT] Attempting connection from loop()...");
       if (connectMQTT())
       {
         discoveryPublished = false; // 재연결 시 Discovery 다시 발행 준비
@@ -1262,25 +1329,32 @@ void loop()
 
   if (!discoveryPublished && mqtt.connected())
   {
-    // 200ms마다 1개씩 발행 (비동기 느낌)
-    if (millis() - lastDiscoveryTime > 200)
+    if (monitorActive)
     {
-      lastDiscoveryTime = millis();
+      // 모니터링 접속 중에는 웹소켓 우선, discovery는 잠시 지연
+    }
+    else
+    {
+      // 200ms마다 1개씩 발행 (비동기 느낌)
+      if (millis() - lastDiscoveryTime > 200)
+      {
+        lastDiscoveryTime = millis();
 
-      if (publishDiscoveryEntity(discoveryIndex))
-      {
-        discoveryIndex++;
-        if (discoveryIndex >= 12) // 총 12개 엔티티 (Light 3 + Fan 1 + Lock 1 + Climate 4 + Binary 3)
+        if (publishDiscoveryEntity(discoveryIndex))
         {
-          Serial.println("[DISCOVERY] All entities published!");
-          discoveryPublished = true;
-          discoveryIndex = 0;
+          discoveryIndex++;
+          if (discoveryIndex >= 12) // 총 12개 엔티티 (Light 3 + Fan 1 + Lock 1 + Climate 4 + Binary 3)
+          {
+            // Serial.println("[DISCOVERY] All entities published!");
+            discoveryPublished = true;
+            discoveryIndex = 0;
+          }
         }
-      }
-      else
-      {
-        // 발행 실패 시 다음번에 재시도
-        Serial.printf("[DISCOVERY] Entity %d publish failed, retry next loop\n", discoveryIndex);
+        else
+        {
+          // 발행 실패 시 다음번에 재시도
+          // Serial.printf("[DISCOVERY] Entity %d publish failed, retry next loop\n", discoveryIndex);
+        }
       }
     }
   }
@@ -1309,30 +1383,23 @@ void loop()
     {
       RS485Frame frame = parser.parseFrame();
 
+      // 모니터링 가시성 확보: 유효성 여부와 관계없이 파싱된 프레임은 표시
+      if (ws.count() > 0 && ESP.getFreeHeap() > 12000 && frame.rawLength > 0)
+      {
+        String rawHex = RS485Parser::frameToHex(frame.raw, frame.rawLength);
+        if (frame.valid)
+        {
+          ws.textAll("RX: " + rawHex);
+        }
+        else
+        {
+          ws.textAll("RX: [INVALID] " + rawHex);
+        }
+      }
+
       if (frame.valid)
       {
-        // Raw 데이터 로깅
-        uint8_t rawFrame[32];
-        size_t frameLen = frame.length + 2; // Prefix + Length 포함
-        rawFrame[0] = frame.prefix;
-        rawFrame[1] = frame.length;
-        rawFrame[2] = 0x01; // Fixed byte
-        rawFrame[3] = frame.deviceType;
-        rawFrame[4] = frame.command;
-        rawFrame[5] = frame.deviceAddress;
-        memcpy(&rawFrame[6], frame.data, frame.dataLength);
-        rawFrame[6 + frame.dataLength] = frame.checksum;
-        rawFrame[7 + frame.dataLength] = frame.suffix;
-
-        String hexFrame = RS485Parser::frameToHex(rawFrame, frameLen);
-        Serial.println("RX: " + hexFrame);
         yield();
-
-        // WebSocket 전송 (클라이언트 있고 메모리 충분할 때만)
-        if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
-        {
-          ws.textAll("RX: " + hexFrame);
-        }
 
         // 장치 상태 업데이트 및 변경 감지
         bool stateChanged = deviceManager.processFrame(frame);
@@ -1341,7 +1408,7 @@ void loop()
         {
           // JSON으로 변환하여 MQTT 발행
           String jsonState = DeviceDecoder::autoDecodeToJson(frame);
-          Serial.println("  State: " + jsonState);
+          // Serial.println("  State: " + jsonState);
 
           // 장치별 MQTT Topic으로 발행
           String topic = "home/wallpad/";
@@ -1375,7 +1442,7 @@ void loop()
       }
       else
       {
-        Serial.println("RX: Invalid frame");
+        // Serial.println("RX: Invalid frame");
       }
     }
   }
@@ -1397,7 +1464,7 @@ void loop()
       if (ws.count() > 0)
       {
         ws.pingAll();
-        Serial.printf("[WS] Ping sent to %u clients\n", ws.count());
+        // Serial.printf("[WS] Ping sent to %u clients\n", ws.count());
       }
     }
   }
