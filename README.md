@@ -57,7 +57,14 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 - **안전한 재부팅**: HTTP 응답 완료 후 지연 재부팅 (Exception 방지)
 - **WDT 리셋 방지**: 비동기 WiFi 스캔, Ticker ISR 안전성 확보
 
-### 3.5 성능 최적화
+### 3.5 OTA 펌웨어 업데이트
+
+- **ArduinoOTA 지원**: WiFi STA 연결 시 OTA 서비스 자동 활성화
+- **호스트명 설정**: `OTA_HOSTNAME` 매크로로 네트워크 식별 이름 지정
+- **비밀번호 보호**: `OTA_PASSWORD` 매크로로 OTA 인증 설정 가능
+- **업데이트 상태 반영**: OTA 진행 중 MQTT 상태를 `updating`으로 발행
+
+### 3.6 성능 최적화
 
 - **WiFi 스캔 최적화**:
   - Hidden SSID 스캔 제외로 스캔 시간 10배 단축
@@ -76,7 +83,7 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
   - 정적 파일 서빙 시 fileSystemBusy 체크 제거 (읽기 전용은 안전)
   - 동시 요청 처리 개선
 
-### 3.6 RS485 통신 규격
+### 3.7 RS485 통신 규격
 
 프로토콜 상세 명세는 [wallpad_protocol.md](./wallpad_protocol.md) 참조
 
@@ -186,15 +193,51 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 - **REST API**: 설정 조회/업데이트, 장치 상태 조회
 - **WebSocket**: 실시간 RS485 로그, WiFi 스캔 알림
 - **시스템 안정성**: Watchdog, 메모리 모니터링, 자동 재연결
+- **OTA 업데이트**: ArduinoOTA 기반 무선 펌웨어 업로드
 
 ### 🚀 향후 계획
 
 자세한 개발 로드맵은 [TODO.md](./TODO.md) 참조:
 
 - 실제 월패드 하드웨어 RS485 통신 테스트
-- OTA 펌웨어 업데이트 기능
 
-## 8. 참고 문서 (References)
+## 8. OTA 사용 방법
+
+### 8.1 OTA 설정
+
+`src/credentials.h`에 아래 항목을 추가하거나 수정합니다.
+
+```cpp
+#define OTA_HOSTNAME "wallpad-bridge"
+#define OTA_PASSWORD ""
+```
+
+- `OTA_PASSWORD`를 빈 문자열로 두면 인증 없이 OTA 업로드가 허용됩니다.
+- 운영 환경에서는 반드시 강한 비밀번호를 설정하세요.
+
+### 8.2 OTA 업로드
+
+장치가 WiFi에 연결된 상태에서 아래 명령으로 OTA 업로드할 수 있습니다.
+
+```bash
+pio run -e d1_mini_ota -t upload
+```
+
+### 8.3 LittleFS(filesystem) OTA 업로드
+
+`data/` 폴더 내용을 OTA로 반영할 때는 아래 명령을 사용합니다.
+
+```bash
+pio run -e d1_mini_ota_fs -t uploadfs
+```
+
+직접 주소를 지정하려면 다음 명령도 사용할 수 있습니다.
+
+```bash
+pio run -e d1_mini_ota_fs -t uploadfs --upload-port <장치_IP>
+```
+
+## 9. 참고 문서 (References)
 
 - [TODO.md](./TODO.md) - 상세 로드맵 및 작업 목록
 - [wallpad_protocol.md](./wallpad_protocol.md) - RS485 통신 규약
@@ -203,6 +246,6 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
 ---
 
-## 9. 라이선스 (License)
+## 10. 라이선스 (License)
 
 MIT License - 자유롭게 사용, 수정, 배포 가능합니다.

@@ -1,6 +1,7 @@
 #include "credentials.h"
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ArduinoOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -76,6 +77,17 @@ const int MAX_WIFI_RECONNECT_ATTEMPTS = 3; // 3회 실패 시 리부팅
 bool shouldReboot = false;
 unsigned long rebootScheduledTime = 0;
 
+// OTA 상태
+bool otaInProgress = false;
+
+#ifndef OTA_HOSTNAME
+#define OTA_HOSTNAME "wallpad-bridge"
+#endif
+
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD ""
+#endif
+
 bool isMonitorSessionActive()
 {
   if (!ENABLE_MONITOR_PRIORITY)
@@ -110,6 +122,62 @@ void markMonitorSessionInactive()
     return;
 
   monitorSessionActive = false;
+}
+
+void setupOTA()
+{
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+
+  if (strlen(OTA_PASSWORD) > 0)
+  {
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+  }
+
+  ArduinoOTA.onStart([]()
+                     {
+                       otaInProgress = true;
+                       shouldCheckWifiConnection = false;
+                       shouldCheckMqttConnection = false;
+                       if (mqtt.connected())
+                       {
+                         mqtt.publish("home/wallpad/status", "updating", true);
+                       } });
+
+  ArduinoOTA.onEnd([]()
+                   {
+                     otaInProgress = false;
+                     if (mqtt.connected())
+                     {
+                       mqtt.publish("home/wallpad/status", "online", true);
+                     } });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                        {
+                          if (total == 0)
+                            return;
+
+                          static unsigned long lastProgressPublish = 0;
+                          if (millis() - lastProgressPublish > 2000 && mqtt.connected())
+                          {
+                            lastProgressPublish = millis();
+                            char msg[48];
+                            unsigned int percent = (progress * 100U) / total;
+                            snprintf(msg, sizeof(msg), "OTA progress: %u%%", percent);
+                            mqtt.publish("home/wallpad/log/info", msg);
+                          } });
+
+  ArduinoOTA.onError([](ota_error_t error)
+                     {
+                       otaInProgress = false;
+                       if (mqtt.connected())
+                       {
+                         char msg[64];
+                         snprintf(msg, sizeof(msg), "OTA error: %u", error);
+                         mqtt.publish("home/wallpad/log/warning", msg);
+                         mqtt.publish("home/wallpad/status", "online", true);
+                       } });
+
+  ArduinoOTA.begin();
 }
 
 // WiFi 설정 로드 함수
@@ -827,6 +895,11 @@ void setup()
     WiFi.persistent(true);
   }
 
+  if (!isAPMode)
+  {
+    setupOTA();
+  }
+
   // WebServer 엔드포인트들
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *r)
             { 
@@ -1227,6 +1300,17 @@ void setup()
 
 void loop()
 {
+  if (!isAPMode)
+  {
+    ArduinoOTA.handle();
+  }
+
+  if (otaInProgress)
+  {
+    delay(1);
+    return;
+  }
+
   // 재부팅 예약 처리 (HTTP 응답 완료 후 안전하게 재부팅)
   if (shouldReboot && millis() - rebootScheduledTime >= 2000)
   {
