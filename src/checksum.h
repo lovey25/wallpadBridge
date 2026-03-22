@@ -6,10 +6,10 @@
 class Checksum
 {
 public:
-  // 일반적인 XOR 체크섬 (대부분의 국산 월패드 방식)
+  // 월패드 XOR 체크섬: Prefix(0xF7)로 초기화 후 payload XOR
   static uint8_t xorSum(const uint8_t *data, size_t len)
   {
-    uint8_t crc = 0;
+    uint8_t crc = 0xF7;
     for (size_t i = 0; i < len; i++)
       crc ^= data[i];
     return crc;

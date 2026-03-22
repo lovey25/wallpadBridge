@@ -1499,7 +1499,7 @@ void loop()
           switch (frame.deviceType)
           {
           case DEVICE_LIGHT:
-            topic += "light/" + String(frame.deviceAddress) + "/state";
+            topic += "light/" + String(frame.deviceAddress - 0x10) + "/state";
             break;
           case DEVICE_FAN:
             topic += "fan/state";

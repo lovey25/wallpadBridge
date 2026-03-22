@@ -46,7 +46,7 @@
       <div class="card">
         <h3>RS485 명령 전송</h3>
         <div class="controls">
-          <input type="text" id="cmdInput" placeholder="Hex 명령 입력 (예: F70B011901404011000AEE)" />
+          <input type="text" id="cmdInput" placeholder="Hex 명령 입력 (예: F70B01190140110000B4EE)" />
           <button onclick="sendCommand()">📤 전송</button>
         </div>
         <p class="hint-text">💡 팁: 공백 없이 Hex 값만 입력하세요. 프로토콜은 wallpad_protocol.md 참고</p>
@@ -55,9 +55,9 @@
       <div class="card">
         <h3>빠른 테스트 명령</h3>
         <div class="controls">
-          <button onclick="sendQuickCmd('F70B011901404011000AEE')">조명1 조회</button>
-          <button onclick="sendQuickCmd('F70B012B014040110029EE')">환기 조회</button>
-          <button onclick="sendQuickCmd('F70B011801454011003FEE')">거실 난방 조회</button>
+          <button onclick="sendQuickCmd('F70B01190140110000B4EE')">조명1 조회</button>
+          <button onclick="sendQuickCmd('F70B012B014011000086EE')">환기 조회</button>
+          <button onclick="sendQuickCmd('F70B01180145110000B0EE')">거실 난방 조회</button>
         </div>
       </div>
     </div>
@@ -271,6 +271,11 @@
 
         if (!/^[0-9A-F]+$/.test(cmd)) {
           alert("유효한 Hex 값이 아닙니다.");
+          return;
+        }
+
+        if (cmd.length % 2 !== 0) {
+          alert("Hex 길이는 짝수여야 합니다.");
           return;
         }
 

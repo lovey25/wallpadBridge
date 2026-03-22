@@ -131,14 +131,15 @@ public:
     // 장치 주소 및 데이터 추출
     if (bufferIndex >= 7)
     {
-      frame.deviceAddress = buffer[5];
+      // 공통 포맷: [..][Cmd][Func][Addr][Data...][Checksum][Suffix]
+      frame.deviceAddress = buffer[6];
 
-      // 데이터 길이 계산: 전체 - (Prefix + Length + Fixed + Device + Cmd + DevAddr + Checksum + Suffix)
-      int dataLen = bufferIndex - 8;
+      // 데이터 길이 계산: 전체 - (Prefix + Length + Fixed + Device + Cmd + Func + Addr + Checksum + Suffix)
+      int dataLen = bufferIndex - 9;
       if (dataLen > 0 && dataLen <= 16)
       {
         frame.dataLength = dataLen;
-        memcpy(frame.data, &buffer[6], dataLen);
+        memcpy(frame.data, &buffer[7], dataLen);
       }
       else
       {
@@ -151,11 +152,12 @@ public:
 
     // Checksum 검증 (Prefix 제외, Checksum과 Suffix 제외)
     uint8_t calculatedChecksum = Checksum::xorSum(&buffer[1], bufferIndex - 3);
-    uint8_t calculatedChecksumWithPrefix = (uint8_t)(FRAME_PREFIX ^ calculatedChecksum);
+    // 레거시(초기값 0x00) 프레임과의 호환을 위해 Prefix xor 이전값도 허용
+    uint8_t calculatedChecksumLegacy = (uint8_t)(FRAME_PREFIX ^ calculatedChecksum);
 
     frame.checksumValid =
         (calculatedChecksum == frame.checksum) ||
-        (calculatedChecksumWithPrefix == frame.checksum);
+        (calculatedChecksumLegacy == frame.checksum);
 
     if (frame.checksumValid)
     {

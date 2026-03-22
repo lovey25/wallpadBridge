@@ -159,7 +159,6 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 <table>
   <tr>
     <td><img src="circuit/wallpad_bridge_wtAMS1117_bb.png" alt="HW" height="300"></td>
-    <td><img src="circuit/hardware_sample.jpeg" alt="SAMPLE" height="300"></td>
   </tr>
 </table>
 
@@ -249,3 +248,29 @@ pio run -e d1_mini_ota_fs -t uploadfs --upload-port <장치_IP>
 ## 10. 라이선스 (License)
 
 MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
+
+---
+
+## 📝 알려진 제한사항
+
+- **메모리**: ESP8266 제한으로 동시 처리 가능한 장치 수 제한
+- **RS485**: SoftwareSerial 사용으로 9600bps 제한
+- **WebSocket**: 동시 연결 클라이언트 수 제한 (최대 3개)
+- **LittleFS**: 256KB 파일시스템 용량
+
+## ✅ 최근 해결된 이슈
+
+### 2026-03-22: RS485 제어/모니터링 정합성 개선
+
+- **체크섬 계산 수정**: `crc=0xF7` 초기화 XOR 방식으로 통일
+- **프레임 파서 수정**: 주소/데이터 오프셋을 프로토콜 포맷에 맞게 보정
+- **조명 상태 토픽 수정**: `home/wallpad/light/1..3/state`로 정합성 확보
+- **monitor.htm 테스트 명령 수정**: 잘못된 HEX 샘플 교정 및 입력 검증(짝수 길이) 추가
+- **루프백 테스트 가이드 추가**: 단일보드 SoftwareSerial 자기 루프백은 참고용으로만 사용
+
+### 2026-02-18: 성능 최적화
+
+- **WebSocket 연결 지연 (8초)**: monitor.htm의 script를 head → body 끝으로 이동하여 해결
+- **WiFi 스캔 느림 (10초+)**: Hidden SSID 스캔 제외로 해결
+- **MQTT Discovery blocking**: 비동기 분산 발행으로 개선
+- **Climate 엔티티 표시 오류**: Discovery 설정 수정 및 mode 소문자 변경

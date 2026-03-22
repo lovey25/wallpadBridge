@@ -4,8 +4,6 @@
 
 ### 1. 하드웨어 테스트
 
-**Priority: High**
-
 - [x] Serial Monitor로 부팅 로그 확인
 - [x] WiFi 연결 및 MQTT 연결 검증
 - [x] 웹 UI 접속 테스트 (http://[ESP_IP])
@@ -24,7 +22,7 @@
   - Fan 속도 변경 확인
   - Climate 온도/모드 변경 확인
   - DoorLock 상태 확인
-- [ ] MQTT → RS485 명령 송신 테스트
+- [x] MQTT → RS485 명령 송신 테스트
   - Home Assistant에서 조명 켜기/끄기
   - 환기팬 속도 변경
   - 온도 설정 변경
@@ -44,7 +42,7 @@
 - [x] Climate 엔티티 온도 조절기 설정 수정
   - temperature_unit, precision 필드 추가
   - Mode 소문자 변경 (heat, off)
-- [ ] Home Assistant UI에서 장치 제어 테스트 (실제 RS485 필요)
+- [x] Home Assistant UI에서 장치 제어 테스트 (실제 RS485 필요)
 - [ ] LWT(Last Will Testament) 동작 확인
 - [ ] 상태 동기화 검증 (RS485 → MQTT)
 
@@ -74,24 +72,6 @@
 - [x] ArduinoOTA 통합 (WiFi STA 모드 자동 활성화)
 - [x] OTA 호스트명/비밀번호 매크로 지원 (`OTA_HOSTNAME`, `OTA_PASSWORD`)
 - [ ] 업데이트 실패 시 롤백 메커니즘
-
----
-
-## 📝 알려진 제한사항
-
-- **메모리**: ESP8266 제한으로 동시 처리 가능한 장치 수 제한
-- **RS485**: SoftwareSerial 사용으로 9600bps 제한
-- **WebSocket**: 동시 연결 클라이언트 수 제한 (최대 3개)
-- **LittleFS**: 256KB 파일시스템 용량
-
-## ✅ 최근 해결된 이슈
-
-### 2026-02-18: 성능 최적화
-
-- **WebSocket 연결 지연 (8초)**: monitor.htm의 script를 head → body 끝으로 이동하여 해결
-- **WiFi 스캔 느림 (10초+)**: Hidden SSID 스캔 제외로 해결
-- **MQTT Discovery blocking**: 비동기 분산 발행으로 개선
-- **Climate 엔티티 표시 오류**: Discovery 설정 수정 및 mode 소문자 변경
 
 ---
 
