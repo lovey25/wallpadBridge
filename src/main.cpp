@@ -62,6 +62,29 @@ unsigned long lastMemoryCheck = 0;
 const unsigned long MEMORY_CHECK_INTERVAL = 10000; // 10초
 const uint32_t MEMORY_WARNING_THRESHOLD = 10000;   // 10KB 이하 시 경고 (상향)
 
+// RS485 송신 최소 간격 제어 (프로토콜 문서: TX Interval 50ms)
+unsigned long lastRS485TxTime = 0;
+const unsigned long RS485_TX_MIN_INTERVAL_MS = 50;
+
+// WebSocket → RS485 대기 버퍼
+// (async 콜백 컨텍스트에서 SoftwareSerial 직접 호출 시 비트뱅잉 타이밍 오류 발생)
+// → loop() 컨텍스트에서 안전하게 처리
+uint8_t wsCommandBuffer[32];
+size_t wsCommandLen = 0;
+bool wsCommandPending = false;
+
+// RS485 활동 감시 Watchdog
+unsigned long lastRS485ActivityTime = 0;
+bool rs485ActivityWatchdogEnabled = false;
+const unsigned long RS485_WATCHDOG_ENABLE_DELAY_MS = 300000; // 부팅 5분 후 활성화
+const unsigned long RS485_ACTIVITY_TIMEOUT_MS = 600000;      // 10분 무수신 시 재부팅
+
+// 연속 invalid frame 카운터 (파서 상태 꼬임 감지)
+int consecutiveInvalidFrames = 0;
+uint32_t rs485BytesSinceLastFrame = 0;
+const int MAX_CONSECUTIVE_INVALID = 100;
+const uint32_t MAX_BYTES_WITHOUT_FRAME = 512;
+
 // Watchdog 플래그 (콜백에서 Serial.print 방지)
 bool shouldCheckWifiConnection = false;
 bool shouldCheckMqttConnection = false;
@@ -340,10 +363,16 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     }
   }
 
-  // RS485로 명령 전송
+  // RS485로 명령 전송 (최소 TX 간격 보장: 프로토콜 문서 TX Interval 50ms)
   if (cmdLen > 0)
   {
+    unsigned long sinceLastTx = millis() - lastRS485TxTime;
+    if (sinceLastTx < RS485_TX_MIN_INTERVAL_MS)
+    {
+      delay(RS485_TX_MIN_INTERVAL_MS - sinceLastTx);
+    }
     rs485.write(cmdBuffer, cmdLen);
+    lastRS485TxTime = millis();
     String hexCmd = CommandBuilder::toHexString(cmdBuffer, cmdLen);
     // Serial.println("[MQTT->RS485] TX: " + hexCmd);
     if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
@@ -833,8 +862,15 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
       // Serial.printf("[WS] Data too large (%u bytes), ignoring\n", len);
       return;
     }
-    // 웹 UI에서 수신한 데이터를 RS485로 전송
-    rs485.write(data, len);
+    // 웹 UI에서 수신한 데이터를 RS485 대기 버퍼에 저장
+    // async 콜백 내 SoftwareSerial 직접 호출은 비트뱅잉 타이밍 오류를 유발함
+    // 실제 전송은 loop() 컨텍스트에서 수행 (wsCommandPending 플래그로 처리)
+    if (!wsCommandPending && len <= 32)
+    {
+      memcpy(wsCommandBuffer, data, len);
+      wsCommandLen = len;
+      wsCommandPending = true;
+    }
   }
 }
 
@@ -1337,6 +1373,26 @@ void loop()
     }
   }
 
+  // RS485 활동 감시 Watchdog 활성화 (부팅 5분 후 - 초기 연결 안정화 대기)
+  if (!rs485ActivityWatchdogEnabled && millis() > RS485_WATCHDOG_ENABLE_DELAY_MS)
+  {
+    rs485ActivityWatchdogEnabled = true;
+  }
+
+  // RS485 10분 무수신 시 재부팅 (XY-017 래치 또는 파서 비정상 복구)
+  if (rs485ActivityWatchdogEnabled && !isAPMode && !otaInProgress)
+  {
+    if (millis() - lastRS485ActivityTime > RS485_ACTIVITY_TIMEOUT_MS)
+    {
+      if (WiFi.status() == WL_CONNECTED && mqtt.connected())
+      {
+        mqtt.publish("home/wallpad/log/warning", "RS485 silence timeout: rebooting");
+        delay(300);
+      }
+      ESP.restart();
+    }
+  }
+
   // Watchdog 플래그 처리
   if (shouldCheckWifiConnection)
   {
@@ -1449,11 +1505,37 @@ void loop()
   }
   yield();
 
+  // WebSocket에서 받은 RS485 명령 처리 (loop() 컨텍스트 = SoftwareSerial 안전)
+  if (wsCommandPending)
+  {
+    wsCommandPending = false;
+    unsigned long sinceLastTx = millis() - lastRS485TxTime;
+    if (sinceLastTx < RS485_TX_MIN_INTERVAL_MS)
+    {
+      delay(RS485_TX_MIN_INTERVAL_MS - sinceLastTx);
+    }
+    rs485.write(wsCommandBuffer, wsCommandLen);
+    lastRS485TxTime = millis();
+    // 모든 WebSocket 클라이언트에 TX 로그 브로드캐스트 (MQTT 경로와 동일하게)
+    if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
+    {
+      ws.textAll("TX: " + RS485Parser::frameToHex(wsCommandBuffer, wsCommandLen));
+    }
+  }
+
   // RS485 데이터 수신 및 파싱 (최대 50바이트/루프)
   int bytesProcessed = 0;
   while (rs485.available() && bytesProcessed < 50)
   {
     uint8_t byte = rs485.read();
+    lastRS485ActivityTime = millis();
+    rs485BytesSinceLastFrame++;
+    // 너무 많은 바이트가 유효 프레임 없이 쌓이면 파서 리셋 (파서 상태 꼬임 방지)
+    if (rs485BytesSinceLastFrame > MAX_BYTES_WITHOUT_FRAME)
+    {
+      parser.reset();
+      rs485BytesSinceLastFrame = 0;
+    }
     parser.addByte(byte);
     bytesProcessed++;
 
@@ -1483,6 +1565,8 @@ void loop()
 
       if (frame.valid)
       {
+        consecutiveInvalidFrames = 0;
+        rs485BytesSinceLastFrame = 0;
         yield();
 
         // 장치 상태 업데이트 및 변경 감지
@@ -1526,7 +1610,16 @@ void loop()
       }
       else
       {
-        // Serial.println("RX: Invalid frame");
+        consecutiveInvalidFrames++;
+        if (consecutiveInvalidFrames >= MAX_CONSECUTIVE_INVALID)
+        {
+          consecutiveInvalidFrames = 0;
+          rs485BytesSinceLastFrame = 0;
+          if (WiFi.status() == WL_CONNECTED && mqtt.connected())
+          {
+            mqtt.publish("home/wallpad/log/warning", "RS485: too many invalid frames");
+          }
+        }
       }
     }
   }
