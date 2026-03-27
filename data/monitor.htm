@@ -25,6 +25,18 @@
       </div>
 
       <div class="card">
+        <h3>전송 진단</h3>
+        <div id="txDiagPanel" class="hint-text">
+          상태: <span id="diagStatus">확인 중...</span><br />
+          큐: <span id="diagDepth">-</span> / 피크: <span id="diagPeak">-</span><br />
+          누적 전송: <span id="diagSent">-</span> / 누적 큐잉: <span id="diagQueued">-</span><br />
+          드롭: <span id="diagDropped">-</span> / 버스대기: <span id="diagBlocked">-</span> / 강제TX:
+          <span id="diagForced">-</span><br />
+          Heap: <span id="diagHeap">-</span> / RS485 idle(ms): <span id="diagIdle">-</span>
+        </div>
+      </div>
+
+      <div class="card">
         <h3>필터</h3>
         <div class="filter-buttons">
           <button class="filter-btn active" onclick="toggleFilter('rx')">📥 RX (수신)</button>
@@ -71,6 +83,7 @@
       let reconnectDelayMs = 1000;
       let connectTimeoutTimer = null;
       let monitorPingTimer = null;
+      let txDiagTimer = null;
 
       function sendMonitorPing() {
         fetch("/api/monitor/ping", {
@@ -96,10 +109,43 @@
           monitorPingTimer = null;
         }
 
+        if (txDiagTimer) {
+          clearInterval(txDiagTimer);
+          txDiagTimer = null;
+        }
+
         if (navigator.sendBeacon) {
           navigator.sendBeacon("/api/monitor/leave");
         } else {
           fetch("/api/monitor/leave", { method: "POST", keepalive: true }).catch(() => {});
+        }
+      }
+
+      function renderTxDiag(diag) {
+        document.getElementById("diagStatus").textContent =
+          `${diag.status || "-"}${diag.message ? " / " + diag.message : ""}`;
+        document.getElementById("diagDepth").textContent = diag.depth ?? "-";
+        document.getElementById("diagPeak").textContent = diag.peak ?? "-";
+        document.getElementById("diagSent").textContent = diag.sent ?? "-";
+        document.getElementById("diagQueued").textContent = diag.queued ?? "-";
+        document.getElementById("diagDropped").textContent = diag.dropped ?? "-";
+        document.getElementById("diagBlocked").textContent = diag.blocked ?? "-";
+        document.getElementById("diagForced").textContent = diag.forced ?? "-";
+        document.getElementById("diagHeap").textContent = diag.free_heap ?? "-";
+        document.getElementById("diagIdle").textContent = diag.rs485_idle_ms ?? "-";
+      }
+
+      async function fetchTxDiag() {
+        try {
+          const response = await fetch("/api/rs485/diag", { cache: "no-store" });
+          if (!response.ok) {
+            document.getElementById("diagStatus").textContent = `diag error ${response.status}`;
+            return;
+          }
+          const diag = await response.json();
+          renderTxDiag(diag);
+        } catch (error) {
+          document.getElementById("diagStatus").textContent = "diag network error";
         }
       }
 
@@ -179,7 +225,7 @@
           if (msg.startsWith("RX:")) {
             logClass = "log-rx";
             if (!filters.rx) return;
-          } else if (msg.startsWith("TX:")) {
+          } else if (msg.startsWith("TX")) {
             logClass = "log-tx";
             if (!filters.tx) return;
           } else if (msg.startsWith("STATE:")) {
@@ -260,7 +306,7 @@
       }
 
       // 명령 전송
-      function sendCommand() {
+      async function sendCommand() {
         const input = document.getElementById("cmdInput");
         const cmd = input.value.replace(/\s/g, "").toUpperCase();
 
@@ -279,26 +325,48 @@
           return;
         }
 
-        if (websocket.readyState !== WebSocket.OPEN) {
-          alert("WebSocket이 연결되지 않았습니다.");
-          return;
-        }
+        try {
+          const response = await fetch("/api/rs485/send", {
+            method: "POST",
+            headers: {
+              "Content-Type": "text/plain",
+            },
+            body: cmd,
+          });
 
-        // Hex 문자열을 바이트 배열로 변환
-        const bytes = [];
-        for (let i = 0; i < cmd.length; i += 2) {
-          bytes.push(parseInt(cmd.substr(i, 2), 16));
-        }
+          if (!response.ok) {
+            let errorText = "";
+            try {
+              const errorJson = await response.json();
+              errorText = errorJson.message || JSON.stringify(errorJson);
+              renderTxDiag(errorJson);
+            } catch (_e) {
+              errorText = await response.text();
+            }
+            alert(`전송 실패: ${errorText || response.status}`);
+            addLog(`CMD FAIL: ${cmd} (${errorText || response.status})`, "log-error");
+            return;
+          }
 
-        websocket.send(new Uint8Array(bytes));
-        addLog("TX: " + cmd, "log-tx");
-        input.value = "";
+          try {
+            const okJson = await response.json();
+            renderTxDiag(okJson);
+          } catch (_e) {
+            // JSON 파싱 실패 시 정기 diag poll이 상태를 보정한다.
+          }
+
+          input.value = "";
+          addLog(`CMD QUEUED: ${cmd}`, "log-tx");
+        } catch (error) {
+          alert("명령 전송 중 네트워크 오류가 발생했습니다.");
+          addLog(`CMD FAIL: ${cmd} (network error)`, "log-error");
+        }
       }
 
       // 빠른 명령 전송
-      function sendQuickCmd(hexCmd) {
+      async function sendQuickCmd(hexCmd) {
         document.getElementById("cmdInput").value = hexCmd;
-        sendCommand();
+        await sendCommand();
       }
 
       // 콘솔 지우기
@@ -327,13 +395,17 @@
         // 서버에 모니터 활성 상태를 먼저 알림
         startMonitorSession();
 
+        // 진단 패널 주기 갱신
+        fetchTxDiag();
+        txDiagTimer = setInterval(fetchTxDiag, 2000);
+
         // WebSocket 즉시 연결
         connectWebSocket();
 
         // 이벤트 리스너 등록
-        document.getElementById("cmdInput").addEventListener("keypress", function (e) {
+        document.getElementById("cmdInput").addEventListener("keypress", async function (e) {
           if (e.key === "Enter") {
-            sendCommand();
+            await sendCommand();
           }
         });
       });

@@ -65,13 +65,42 @@ const uint32_t MEMORY_WARNING_THRESHOLD = 10000;   // 10KB 이하 시 경고 (�
 // RS485 송신 최소 간격 제어 (프로토콜 문서: TX Interval 50ms)
 unsigned long lastRS485TxTime = 0;
 const unsigned long RS485_TX_MIN_INTERVAL_MS = 50;
+const unsigned long RS485_BUS_IDLE_MS = 20;     // TX 전 버스 무활동 최소 대기 (ms)
+const unsigned long RS485_TX_MAX_WAIT_MS = 500; // idle 대기 상한 (ms) - 초과 시 강제 송신
 
-// WebSocket → RS485 대기 버퍼
-// (async 콜백 컨텍스트에서 SoftwareSerial 직접 호출 시 비트뱅잉 타이밍 오류 발생)
-// → loop() 컨텍스트에서 안전하게 처리
-uint8_t wsCommandBuffer[32];
-size_t wsCommandLen = 0;
-bool wsCommandPending = false;
+enum CommandSource
+{
+  COMMAND_SOURCE_WS,
+  COMMAND_SOURCE_MQTT,
+  COMMAND_SOURCE_HTTP
+};
+
+struct PendingRS485Command
+{
+  uint8_t buffer[32];
+  uint8_t length;
+  CommandSource source;
+  unsigned long queuedTime;
+};
+
+struct RS485TxDiagnostics
+{
+  uint32_t enqueued = 0;
+  uint32_t dequeued = 0;
+  uint32_t dropped = 0;
+  uint32_t forcedTx = 0;
+  uint32_t blockedByBus = 0;
+  uint8_t peakDepth = 0;
+  unsigned long lastReportTime = 0;
+};
+
+const uint8_t RS485_COMMAND_QUEUE_SIZE = 6;
+PendingRS485Command rs485CommandQueue[RS485_COMMAND_QUEUE_SIZE];
+uint8_t rs485CommandQueueHead = 0;
+uint8_t rs485CommandQueueTail = 0;
+uint8_t rs485CommandQueueCount = 0;
+RS485TxDiagnostics rs485TxDiagnostics;
+bool rs485QueueDropReported = false;
 
 // RS485 활동 감시 Watchdog
 unsigned long lastRS485ActivityTime = 0;
@@ -128,6 +157,327 @@ bool isMonitorSessionActive()
   }
 
   return true;
+}
+
+unsigned long elapsedSince(unsigned long startTime)
+{
+  return millis() - startTime;
+}
+
+const char *commandSourceToString(CommandSource source)
+{
+  switch (source)
+  {
+  case COMMAND_SOURCE_WS:
+    return "ws";
+  case COMMAND_SOURCE_MQTT:
+    return "mqtt";
+  case COMMAND_SOURCE_HTTP:
+    return "http";
+  default:
+    return "unknown";
+  }
+}
+
+uint8_t getRS485CommandQueueDepth()
+{
+  return rs485CommandQueueCount;
+}
+
+void publishRs485TxDiagnostics(bool forceReport = false)
+{
+  if (!mqtt.connected())
+    return;
+
+  if (!forceReport && elapsedSince(rs485TxDiagnostics.lastReportTime) < 60000)
+    return;
+
+  rs485TxDiagnostics.lastReportTime = millis();
+
+  char payload[192];
+  snprintf(payload, sizeof(payload),
+           "{\"queued\":%lu,\"sent\":%lu,\"dropped\":%lu,\"forced\":%lu,\"blocked\":%lu,\"depth\":%u,\"peak\":%u}",
+           static_cast<unsigned long>(rs485TxDiagnostics.enqueued),
+           static_cast<unsigned long>(rs485TxDiagnostics.dequeued),
+           static_cast<unsigned long>(rs485TxDiagnostics.dropped),
+           static_cast<unsigned long>(rs485TxDiagnostics.forcedTx),
+           static_cast<unsigned long>(rs485TxDiagnostics.blockedByBus),
+           getRS485CommandQueueDepth(),
+           rs485TxDiagnostics.peakDepth);
+  mqtt.publish("home/wallpad/diag/tx", payload, true);
+}
+
+String getRs485TxDiagJson(const char *status = nullptr, const char *message = nullptr)
+{
+  String json = "{";
+  if (status != nullptr)
+  {
+    json += "\"status\":\"";
+    json += status;
+    json += "\",";
+  }
+  if (message != nullptr)
+  {
+    json += "\"message\":\"";
+    json += message;
+    json += "\",";
+  }
+
+  json += "\"queued\":" + String(rs485TxDiagnostics.enqueued) + ",";
+  json += "\"sent\":" + String(rs485TxDiagnostics.dequeued) + ",";
+  json += "\"dropped\":" + String(rs485TxDiagnostics.dropped) + ",";
+  json += "\"forced\":" + String(rs485TxDiagnostics.forcedTx) + ",";
+  json += "\"blocked\":" + String(rs485TxDiagnostics.blockedByBus) + ",";
+  json += "\"depth\":" + String(getRS485CommandQueueDepth()) + ",";
+  json += "\"peak\":" + String(rs485TxDiagnostics.peakDepth) + ",";
+  json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"rs485_idle_ms\":" + String(elapsedSince(lastRS485ActivityTime));
+  json += "}";
+  return json;
+}
+
+bool isHexChar(char c)
+{
+  return (c >= '0' && c <= '9') ||
+         (c >= 'A' && c <= 'F') ||
+         (c >= 'a' && c <= 'f');
+}
+
+uint8_t hexCharToValue(char c)
+{
+  if (c >= '0' && c <= '9')
+    return static_cast<uint8_t>(c - '0');
+  if (c >= 'A' && c <= 'F')
+    return static_cast<uint8_t>(c - 'A' + 10);
+  return static_cast<uint8_t>(c - 'a' + 10);
+}
+
+bool parseWallpadHexFrame(String hexInput, uint8_t *outBuffer, size_t maxLen, size_t &outLen)
+{
+  hexInput.replace(" ", "");
+  hexInput.toUpperCase();
+
+  if (hexInput.length() < 14 || hexInput.length() % 2 != 0)
+    return false;
+
+  if (!hexInput.startsWith("F7") || !hexInput.endsWith("EE"))
+    return false;
+
+  for (size_t i = 0; i < hexInput.length(); i++)
+  {
+    if (!isHexChar(hexInput[i]))
+      return false;
+  }
+
+  outLen = hexInput.length() / 2;
+  if (outLen == 0 || outLen > maxLen)
+    return false;
+
+  for (size_t i = 0; i < outLen; i++)
+  {
+    char high = hexInput[i * 2];
+    char low = hexInput[i * 2 + 1];
+    outBuffer[i] = static_cast<uint8_t>((hexCharToValue(high) << 4) | hexCharToValue(low));
+  }
+
+  return outBuffer[0] == 0xF7 && outBuffer[outLen - 1] == 0xEE;
+}
+
+bool enqueueRS485Command(const uint8_t *data, size_t len, CommandSource source)
+{
+  if (len == 0 || len > sizeof(rs485CommandQueue[0].buffer))
+    return false;
+
+  if (rs485CommandQueueCount >= RS485_COMMAND_QUEUE_SIZE)
+  {
+    rs485TxDiagnostics.dropped++;
+    if (!rs485QueueDropReported && mqtt.connected())
+    {
+      mqtt.publish("home/wallpad/log/warning", "RS485 TX queue full: dropping command");
+      rs485QueueDropReported = true;
+    }
+    return false;
+  }
+
+  PendingRS485Command &slot = rs485CommandQueue[rs485CommandQueueTail];
+  memcpy(slot.buffer, data, len);
+  slot.length = static_cast<uint8_t>(len);
+  slot.source = source;
+  slot.queuedTime = millis();
+
+  rs485CommandQueueTail = (rs485CommandQueueTail + 1) % RS485_COMMAND_QUEUE_SIZE;
+  rs485CommandQueueCount++;
+  rs485TxDiagnostics.enqueued++;
+  if (rs485CommandQueueCount > rs485TxDiagnostics.peakDepth)
+  {
+    rs485TxDiagnostics.peakDepth = rs485CommandQueueCount;
+  }
+
+  return true;
+}
+
+bool hasPendingRS485Command()
+{
+  return rs485CommandQueueCount > 0;
+}
+
+PendingRS485Command &peekPendingRS485Command()
+{
+  return rs485CommandQueue[rs485CommandQueueHead];
+}
+
+void popPendingRS485Command()
+{
+  if (rs485CommandQueueCount == 0)
+    return;
+
+  rs485CommandQueueHead = (rs485CommandQueueHead + 1) % RS485_COMMAND_QUEUE_SIZE;
+  rs485CommandQueueCount--;
+}
+
+bool isRS485BusIdle()
+{
+  return rs485.available() == 0 && elapsedSince(lastRS485ActivityTime) >= RS485_BUS_IDLE_MS;
+}
+
+void broadcastRs485TxFrame(const PendingRS485Command &command)
+{
+  if (ws.count() == 0 || ESP.getFreeHeap() <= 12000)
+    return;
+
+  String message = "TX[";
+  message += commandSourceToString(command.source);
+  message += "]: ";
+  message += RS485Parser::frameToHex(command.buffer, command.length);
+  ws.textAll(message);
+}
+
+void processRS485Incoming()
+{
+  int bytesProcessed = 0;
+  while (rs485.available() && bytesProcessed < 50)
+  {
+    uint8_t byte = rs485.read();
+    lastRS485ActivityTime = millis();
+    rs485BytesSinceLastFrame++;
+    if (rs485BytesSinceLastFrame > MAX_BYTES_WITHOUT_FRAME)
+    {
+      parser.reset();
+      rs485BytesSinceLastFrame = 0;
+    }
+    parser.addByte(byte);
+    bytesProcessed++;
+
+    if (bytesProcessed % 10 == 0)
+    {
+      yield();
+    }
+
+    if (parser.isFrameReady())
+    {
+      RS485Frame frame = parser.parseFrame();
+
+      if (ws.count() > 0 && ESP.getFreeHeap() > 12000 && frame.rawLength > 0)
+      {
+        String rawHex = RS485Parser::frameToHex(frame.raw, frame.rawLength);
+        if (frame.valid)
+        {
+          ws.textAll("RX: " + rawHex);
+        }
+        else
+        {
+          ws.textAll("RX: [INVALID] " + rawHex);
+        }
+      }
+
+      if (frame.valid)
+      {
+        consecutiveInvalidFrames = 0;
+        rs485BytesSinceLastFrame = 0;
+        yield();
+
+        bool stateChanged = deviceManager.processFrame(frame);
+
+        if (stateChanged)
+        {
+          String jsonState = DeviceDecoder::autoDecodeToJson(frame);
+
+          String topic = "home/wallpad/";
+          switch (frame.deviceType)
+          {
+          case DEVICE_LIGHT:
+            topic += "light/" + String(frame.deviceAddress - 0x10) + "/state";
+            break;
+          case DEVICE_FAN:
+            topic += "fan/state";
+            break;
+          case DEVICE_DOORLOCK:
+            topic += "doorlock/state";
+            break;
+          case DEVICE_CLIMATE:
+            topic += "climate/" + String(frame.deviceAddress - 0x10) + "/state";
+            break;
+          default:
+            topic += "unknown/state";
+          }
+
+          mqtt.publish(topic.c_str(), jsonState.c_str(), true);
+          yield();
+
+          if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
+          {
+            ws.textAll("STATE: " + jsonState);
+          }
+        }
+      }
+      else
+      {
+        consecutiveInvalidFrames++;
+        if (consecutiveInvalidFrames >= MAX_CONSECUTIVE_INVALID)
+        {
+          consecutiveInvalidFrames = 0;
+          rs485BytesSinceLastFrame = 0;
+          if (WiFi.status() == WL_CONNECTED && mqtt.connected())
+          {
+            mqtt.publish("home/wallpad/log/warning", "RS485: too many invalid frames");
+          }
+        }
+      }
+    }
+  }
+}
+
+void processPendingRS485Command()
+{
+  if (!hasPendingRS485Command())
+    return;
+
+  if (elapsedSince(lastRS485TxTime) < RS485_TX_MIN_INTERVAL_MS)
+    return;
+
+  PendingRS485Command &command = peekPendingRS485Command();
+  bool forcedTx = elapsedSince(command.queuedTime) >= RS485_TX_MAX_WAIT_MS;
+  if (!forcedTx && !isRS485BusIdle())
+  {
+    rs485TxDiagnostics.blockedByBus++;
+    return;
+  }
+
+  if (forcedTx)
+  {
+    rs485TxDiagnostics.forcedTx++;
+  }
+
+  rs485.write(command.buffer, command.length);
+  lastRS485TxTime = millis();
+  rs485TxDiagnostics.dequeued++;
+  broadcastRs485TxFrame(command);
+  popPendingRS485Command();
+
+  if (rs485CommandQueueCount == 0)
+  {
+    rs485QueueDropReported = false;
+  }
 }
 
 void markMonitorSessionActive()
@@ -363,26 +713,10 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     }
   }
 
-  // RS485로 명령 전송 (최소 TX 간격 보장: 프로토콜 문서 TX Interval 50ms)
+  // MQTT 명령을 버퍼에 저장 → loop()에서 버스 idle 확인 후 송신
   if (cmdLen > 0)
   {
-    unsigned long sinceLastTx = millis() - lastRS485TxTime;
-    if (sinceLastTx < RS485_TX_MIN_INTERVAL_MS)
-    {
-      delay(RS485_TX_MIN_INTERVAL_MS - sinceLastTx);
-    }
-    rs485.write(cmdBuffer, cmdLen);
-    lastRS485TxTime = millis();
-    String hexCmd = CommandBuilder::toHexString(cmdBuffer, cmdLen);
-    // Serial.println("[MQTT->RS485] TX: " + hexCmd);
-    if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
-    {
-      ws.textAll("TX: " + hexCmd);
-    }
-  }
-  else
-  {
-    // Serial.println("[MQTT] No command generated");
+    enqueueRS485Command(cmdBuffer, cmdLen, COMMAND_SOURCE_MQTT);
   }
 }
 
@@ -856,21 +1190,38 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
   }
   else if (t == WS_EVT_DATA)
   {
+    AwsFrameInfo *info = reinterpret_cast<AwsFrameInfo *>(arg);
+    if (info == nullptr)
+    {
+      return;
+    }
+
+    // fragmented/continuation/control 프레임은 무시하고 완전한 단일 메시지만 처리
+    if (info->index != 0 || info->len != len || !info->final)
+    {
+      return;
+    }
+
+    if (!(info->message_opcode == WS_BINARY || info->message_opcode == WS_TEXT))
+    {
+      return;
+    }
+
     // 데이터 크기 제한 (32바이트 이하만 허용)
     if (len > 32)
     {
-      // Serial.printf("[WS] Data too large (%u bytes), ignoring\n", len);
       return;
     }
-    // 웹 UI에서 수신한 데이터를 RS485 대기 버퍼에 저장
-    // async 콜백 내 SoftwareSerial 직접 호출은 비트뱅잉 타이밍 오류를 유발함
-    // 실제 전송은 loop() 컨텍스트에서 수행 (wsCommandPending 플래그로 처리)
-    if (!wsCommandPending && len <= 32)
+    // 유효한 월패드 프레임인지 검증 (0xF7로 시작, 0xEE로 끝, 최소 7바이트)
+    // → WebSocket PONG 누출(0x8A 0x80 등 제어 프레임 바이트) 및 노이즈 차단
+    if (len < 7 || data[0] != 0xF7 || data[len - 1] != 0xEE)
     {
-      memcpy(wsCommandBuffer, data, len);
-      wsCommandLen = len;
-      wsCommandPending = true;
+      return;
     }
+    // 웹 UI에서 수신한 데이터를 RS485 큐에 저장
+    // async 콜백 내 SoftwareSerial 직접 호출은 비트뱅잉 타이밍 오류를 유발함
+    // 실제 전송은 loop() 컨텍스트에서 수행한다.
+    enqueueRS485Command(data, len, COMMAND_SOURCE_WS);
   }
 }
 
@@ -1267,6 +1618,56 @@ void setup()
         rebootScheduledTime = millis();
       });
 
+  // RS485 명령 전송 API (모니터 페이지 HTTP 경로)
+  server.on(
+      "/api/rs485/send", HTTP_POST,
+      [](AsyncWebServerRequest *r) {},
+      NULL,
+      [](AsyncWebServerRequest *r, uint8_t *data, size_t len, size_t index, size_t total)
+      {
+        static String body;
+
+        if (index == 0)
+        {
+          if (ESP.getFreeHeap() < 12000)
+          {
+            r->send(503, "application/json", getRs485TxDiagJson("error", "Low memory, try again"));
+            return;
+          }
+          body = "";
+        }
+
+        for (size_t i = 0; i < len; i++)
+        {
+          body += static_cast<char>(data[i]);
+        }
+
+        if (index + len < total)
+        {
+          return;
+        }
+
+        uint8_t frame[32];
+        size_t frameLen = 0;
+        if (!parseWallpadHexFrame(body, frame, sizeof(frame), frameLen))
+        {
+          r->send(400, "application/json", getRs485TxDiagJson("error", "Invalid wallpad hex frame"));
+          return;
+        }
+
+        if (!enqueueRS485Command(frame, frameLen, COMMAND_SOURCE_HTTP))
+        {
+          r->send(503, "application/json", getRs485TxDiagJson("error", "RS485 queue full"));
+          return;
+        }
+
+        r->send(202, "application/json", getRs485TxDiagJson("ok", "Queued"));
+      });
+
+  // RS485 TX 진단 조회 API (모니터 페이지 패널)
+  server.on("/api/rs485/diag", HTTP_GET, [](AsyncWebServerRequest *r)
+            { r->send(200, "application/json", getRs485TxDiagJson("ok", "diag")); });
+
   // 장치 상태 조회 API
   server.on("/api/devices", HTTP_GET, [](AsyncWebServerRequest *r)
             {
@@ -1499,130 +1900,17 @@ void loop()
     }
   }
 
+  processRS485Incoming();
+
   if (mqtt.connected())
   {
     mqtt.loop();
   }
   yield();
 
-  // WebSocket에서 받은 RS485 명령 처리 (loop() 컨텍스트 = SoftwareSerial 안전)
-  if (wsCommandPending)
-  {
-    wsCommandPending = false;
-    unsigned long sinceLastTx = millis() - lastRS485TxTime;
-    if (sinceLastTx < RS485_TX_MIN_INTERVAL_MS)
-    {
-      delay(RS485_TX_MIN_INTERVAL_MS - sinceLastTx);
-    }
-    rs485.write(wsCommandBuffer, wsCommandLen);
-    lastRS485TxTime = millis();
-    // 모든 WebSocket 클라이언트에 TX 로그 브로드캐스트 (MQTT 경로와 동일하게)
-    if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
-    {
-      ws.textAll("TX: " + RS485Parser::frameToHex(wsCommandBuffer, wsCommandLen));
-    }
-  }
-
-  // RS485 데이터 수신 및 파싱 (최대 50바이트/루프)
-  int bytesProcessed = 0;
-  while (rs485.available() && bytesProcessed < 50)
-  {
-    uint8_t byte = rs485.read();
-    lastRS485ActivityTime = millis();
-    rs485BytesSinceLastFrame++;
-    // 너무 많은 바이트가 유효 프레임 없이 쌓이면 파서 리셋 (파서 상태 꼬임 방지)
-    if (rs485BytesSinceLastFrame > MAX_BYTES_WITHOUT_FRAME)
-    {
-      parser.reset();
-      rs485BytesSinceLastFrame = 0;
-    }
-    parser.addByte(byte);
-    bytesProcessed++;
-
-    if (bytesProcessed % 10 == 0)
-    {
-      yield();
-    }
-
-    // 프레임 완성 시 파싱
-    if (parser.isFrameReady())
-    {
-      RS485Frame frame = parser.parseFrame();
-
-      // 모니터링 가시성 확보: 유효성 여부와 관계없이 파싱된 프레임은 표시
-      if (ws.count() > 0 && ESP.getFreeHeap() > 12000 && frame.rawLength > 0)
-      {
-        String rawHex = RS485Parser::frameToHex(frame.raw, frame.rawLength);
-        if (frame.valid)
-        {
-          ws.textAll("RX: " + rawHex);
-        }
-        else
-        {
-          ws.textAll("RX: [INVALID] " + rawHex);
-        }
-      }
-
-      if (frame.valid)
-      {
-        consecutiveInvalidFrames = 0;
-        rs485BytesSinceLastFrame = 0;
-        yield();
-
-        // 장치 상태 업데이트 및 변경 감지
-        bool stateChanged = deviceManager.processFrame(frame);
-
-        if (stateChanged)
-        {
-          // JSON으로 변환하여 MQTT 발행
-          String jsonState = DeviceDecoder::autoDecodeToJson(frame);
-          // Serial.println("  State: " + jsonState);
-
-          // 장치별 MQTT Topic으로 발행
-          String topic = "home/wallpad/";
-          switch (frame.deviceType)
-          {
-          case DEVICE_LIGHT:
-            topic += "light/" + String(frame.deviceAddress - 0x10) + "/state";
-            break;
-          case DEVICE_FAN:
-            topic += "fan/state";
-            break;
-          case DEVICE_DOORLOCK:
-            topic += "doorlock/state";
-            break;
-          case DEVICE_CLIMATE:
-            topic += "climate/" + String(frame.deviceAddress - 0x10) + "/state";
-            break;
-          default:
-            topic += "unknown/state";
-          }
-
-          mqtt.publish(topic.c_str(), jsonState.c_str(), true);
-          yield();
-
-          // WebSocket 전송 (클라이언트 있고 메모리 충분할 때만)
-          if (ws.count() > 0 && ESP.getFreeHeap() > 12000)
-          {
-            ws.textAll("STATE: " + jsonState);
-          }
-        }
-      }
-      else
-      {
-        consecutiveInvalidFrames++;
-        if (consecutiveInvalidFrames >= MAX_CONSECUTIVE_INVALID)
-        {
-          consecutiveInvalidFrames = 0;
-          rs485BytesSinceLastFrame = 0;
-          if (WiFi.status() == WL_CONNECTED && mqtt.connected())
-          {
-            mqtt.publish("home/wallpad/log/warning", "RS485: too many invalid frames");
-          }
-        }
-      }
-    }
-  }
+  processRS485Incoming();
+  processPendingRS485Command();
+  publishRs485TxDiagnostics();
 
   // Binary 센서 체크 (1초마다)
   static unsigned long lastWsPing = 0;
