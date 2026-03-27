@@ -31,10 +31,17 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
   - RS485 → MQTT: 수신 패킷을 파싱하여 MQTT Topic으로 발행
   - MQTT → RS485: MQTT 명령을 RS485 프레임으로 변환 송신
   - 지원 장치: 조명(Light), 환기팬(Fan), 도어락(DoorLock), 온도조절기(Climate)
+- **TX 큐 시스템**:
+  - 6슬롯 원형 큐로 RS485 송신 직렬화 (WS / MQTT / HTTP / Poll 소스 구분)
+  - 버스 Idle 대기(20ms) + TX 최소 간격(50ms) + 강제 송신 타임아웃(500ms)
+  - 큐 오버플로 시 MQTT 경고, TX 통계 60초마다 `home/wallpad/diag/tx` 발행
+- **3분 주기 상태 폴링**: 조명 3 + 온도조절기 4 = 7패킷 순차 발행 (PROGMEM 저장)
 - **실시간 모니터링**:
   - `/monitor.htm`: WebSocket 기반 실시간 시리얼 로그 뷰어
   - `/ws`: 양방향 WebSocket 엔드포인트 (RS485 ↔ Web)
   - HEX 포맷 패킷 표시 및 장치 타입/명령 디코딩
+  - `/api/rs485/send`: HEX 문자열 직접 송신 (F7…EE 프레임 검증 후 큐 추가)
+  - `/api/rs485/diag`: TX 큐 통계 실시간 조회
 - **Binary 센서**: D5/D6/D7 핀을 통한 3채널 접점 신호 감지 (Pull-up, 12V 입력)
 
 ### 3.3 Home Assistant 연동
@@ -52,6 +59,8 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 ### 3.4 시스템 안정성
 
 - **Watchdog 타이머**: WiFi/MQTT 연결 상태 감시 (30초 주기)
+- **RS485 활동 Watchdog**: 부팅 5분 후 활성화, 10분 무수신 시 MQTT 경고 후 자동 재부팅
+- **연속 invalid frame 감지**: 100회 연속 or 512바이트 내 정상 프레임 없으면 파서 강제 리셋
 - **메모리 모니터링**: 10초마다 힙 메모리 체크, 10KB 이하 시 경고
 - **자동 재연결**: WiFi 연결 끊김 시 자동 재시도 (3회 실패 시 재부팅)
 - **안전한 재부팅**: HTTP 응답 완료 후 지연 재부팅 (Exception 방지)
@@ -164,35 +173,44 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
 ### 6. 인터페이스 명세 (Endpoints)
 
-| Endpoint        | Method | Description                                    |
-| :-------------- | :----- | :--------------------------------------------- |
-| `/`             | GET    | 시스템 상태 대시보드 및 메인 홈 페이지         |
-| `/monitor.htm`  | GET    | 실시간 시리얼 로그 뷰어 (WebSocket 연동)       |
-| `/wifi.htm`     | GET    | WiFi 설정 관리 및 스캔 결과 확인               |
-| `/config.htm`   | GET    | 시스템 설정 관리 (WiFi + MQTT 통합 설정)       |
-| `/ws`           | WS     | Serial <-> Web 인터페이스 실시간 데이터 스트림 |
-| `/scan`         | GET    | 주변 WiFi AP 리스트 스캔 및 JSON 반환 (비동기) |
-| `/wifistatus`   | GET    | 현재 연결 상태 및 네트워크 정보                |
-| `/wifireset`    | POST   | 저장된 WiFi 설정 삭제 및 모듈 재부팅           |
-| `/connect2ssid` | POST   | SSID 및 비밀번호 수신/저장                     |
-| `/api/config`   | GET    | 현재 설정 조회 (WiFi + MQTT, JSON 응답)        |
-| `/api/config`   | POST   | 설정 업데이트 (WiFi + MQTT, JSON body)         |
-| `/api/devices`  | GET    | 모든 장치 상태 조회 (JSON)                     |
-| `/savepreset`   | POST   | RS485 제어 프리셋 데이터 저장                  |
-| `/preset.ini`   | GET    | 저장된 프리셋 파일 다운로드/조회               |
+| Endpoint             | Method | Description                                        |
+| :------------------- | :----- | :------------------------------------------------- |
+| `/`                  | GET    | 시스템 상태 대시보드 및 메인 홈 페이지             |
+| `/monitor.htm`       | GET    | 실시간 시리얼 로그 뷰어 (WebSocket 연동)           |
+| `/wifi.htm`          | GET    | `/config.htm`으로 리다이렉트                       |
+| `/config.htm`        | GET    | 시스템 설정 관리 (WiFi + MQTT 통합 설정)           |
+| `/ws`                | WS     | Serial <-> Web 인터페이스 실시간 데이터 스트림     |
+| `/scan`              | GET    | 주변 WiFi AP 리스트 스캔 및 JSON 반환 (비동기)     |
+| `/wifistatus`        | GET    | 현재 연결 상태 및 네트워크 정보                    |
+| `/wifireset`         | POST   | 저장된 WiFi 설정 삭제 및 모듈 재부팅               |
+| `/connect2ssid`      | POST   | SSID 및 비밀번호 수신/저장                         |
+| `/reboot`            | POST   | 설정 유지 재부팅                                   |
+| `/api/config`        | GET    | 현재 설정 조회 (WiFi + MQTT, JSON 응답)            |
+| `/api/config`        | POST   | 설정 업데이트 (WiFi + MQTT, JSON body)             |
+| `/api/devices`       | GET    | 모든 장치 상태 조회 (JSON)                         |
+| `/api/rs485/send`    | POST   | RS485 HEX 프레임 직접 송신 (F7…EE 검증 후 큐 추가) |
+| `/api/rs485/diag`    | GET    | RS485 TX 큐 통계 및 진단 정보 조회 (JSON)          |
+| `/api/monitor/ping`  | POST   | 모니터 세션 활성 유지 ping                         |
+| `/api/monitor/leave` | POST   | 모니터 세션 이탈 알림                              |
+| `/savepreset`        | POST   | RS485 제어 프리셋 데이터 저장                      |
+| `/preset.ini`        | GET    | 저장된 프리셋 파일 다운로드/조회                   |
 
 ## 7. 구현 상태 (Implementation Status)
 
 ### ✅ 완료된 기능
 
 - **RS485 프로토콜 엔진**: 파싱, 디코딩, 상태 관리, 명령 생성 (Light, Fan, DoorLock, Climate)
+- **RS485 TX 큐**: 6슬롯 원형 큐, 버스 Idle 대기, 소스 추적 (WS/MQTT/HTTP/Poll)
+- **RS485 진단**: TX 통계 자동 발행(`home/wallpad/diag/tx`), `/api/rs485/diag` API
+- **RS485 안정성**: 활동 Watchdog(10분 무수신→재부팅), 연속 invalid frame 자동 복구
+- **상태 폴링**: 조명 3 + 온도조절기 4채널 3분 주기 자동 조회
 - **WiFi 네트워크**: Station/AP 모드, 비동기 스캔, 자동 프로비저닝
 - **웹 UI**: 대시보드, 설정 관리, 실시간 모니터 (4개 페이지, 다크 테마)
 - **MQTT 통합**: 양방향 통신, Home Assistant Discovery, LWT
-- **REST API**: 설정 조회/업데이트, 장치 상태 조회
-- **WebSocket**: 실시간 RS485 로그, WiFi 스캔 알림
-- **시스템 안정성**: Watchdog, 메모리 모니터링, 자동 재연결
-- **OTA 업데이트**: ArduinoOTA 기반 무선 펌웨어 업로드
+- **REST API**: 설정 조회/업데이트, 장치 상태 조회, RS485 직접 송신·진단
+- **WebSocket**: 실시간 RS485 로그, WiFi 스캔 알림, 30초 ping
+- **시스템 안정성**: WiFi/MQTT Watchdog, 메모리 모니터링, 자동 재연결
+- **OTA 업데이트**: ArduinoOTA 기반 무선 펌웨어 업로드 (진행 상태 MQTT 발행 포함)
 
 ### 🚀 향후 계획
 
