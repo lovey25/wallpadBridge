@@ -72,7 +72,8 @@ enum CommandSource
 {
   COMMAND_SOURCE_WS,
   COMMAND_SOURCE_MQTT,
-  COMMAND_SOURCE_HTTP
+  COMMAND_SOURCE_HTTP,
+  COMMAND_SOURCE_POLL
 };
 
 struct PendingRS485Command
@@ -101,6 +102,24 @@ uint8_t rs485CommandQueueTail = 0;
 uint8_t rs485CommandQueueCount = 0;
 RS485TxDiagnostics rs485TxDiagnostics;
 bool rs485QueueDropReported = false;
+
+// 상태 조회 폴링 패킷 (PROGMEM에 저장하여 RAM 절약)
+static const uint8_t POLL_PACKETS[7][11] PROGMEM = {
+    {0xF7, 0x0B, 0x01, 0x19, 0x01, 0x40, 0x11, 0x00, 0x00, 0xB4, 0xEE}, // light/1 state
+    {0xF7, 0x0B, 0x01, 0x19, 0x01, 0x40, 0x12, 0x00, 0x00, 0xB7, 0xEE}, // light/2 state
+    {0xF7, 0x0B, 0x01, 0x19, 0x01, 0x40, 0x13, 0x00, 0x00, 0xB6, 0xEE}, // light/3 state
+    {0xF7, 0x0B, 0x01, 0x18, 0x01, 0x45, 0x11, 0x00, 0x00, 0xB0, 0xEE}, // climate/1 state
+    {0xF7, 0x0B, 0x01, 0x18, 0x01, 0x45, 0x12, 0x00, 0x00, 0xB3, 0xEE}, // climate/2 state
+    {0xF7, 0x0B, 0x01, 0x18, 0x01, 0x45, 0x13, 0x00, 0x00, 0xB2, 0xEE}, // climate/3 state
+    {0xF7, 0x0B, 0x01, 0x18, 0x01, 0x45, 0x14, 0x00, 0x00, 0xB5, 0xEE}, // climate/4 state
+};
+const uint8_t NUM_POLL_PACKETS = 7;
+
+const unsigned long STATUS_POLL_INTERVAL_MS = 180000UL;     // 3분
+const unsigned long STATUS_POLL_PACKET_INTERVAL_MS = 200UL; // 패킷 간 200ms
+unsigned long lastStatusPollTime = 0;
+unsigned long lastStatusPollEnqueue = 0;
+int8_t statusPollIndex = -1; // -1=비활성, 0~6=진행 중
 
 // RS485 활동 감시 Watchdog
 unsigned long lastRS485ActivityTime = 0;
@@ -174,6 +193,8 @@ const char *commandSourceToString(CommandSource source)
     return "mqtt";
   case COMMAND_SOURCE_HTTP:
     return "http";
+  case COMMAND_SOURCE_POLL:
+    return "poll";
   default:
     return "unknown";
   }
@@ -1732,6 +1753,9 @@ void setup()
   // Watchdog 타이머 시작 (30초마다)
   watchdogTicker.attach(30, watchdogCallback);
 
+  // 상태 조회 폴링 타이머 초기화 (부팅 3분 후 첫 폴링)
+  lastStatusPollTime = millis();
+
   // Serial.println("=== System Ready ===\n");
 }
 
@@ -1895,6 +1919,38 @@ void loop()
         {
           // 발행 실패 시 다음번에 재시도
           // Serial.printf("[DISCOVERY] Entity %d publish failed, retry next loop\n", discoveryIndex);
+        }
+      }
+    }
+  }
+
+  // 상태 조회 폴링 (3분마다, MQTT 연결 중에만)
+  if (!isAPMode && mqtt.connected())
+  {
+    // 3분 경과 + 폴링 비활성 상태이면 폴링 시작
+    if (statusPollIndex < 0 &&
+        millis() - lastStatusPollTime >= STATUS_POLL_INTERVAL_MS)
+    {
+      statusPollIndex = 0;
+      lastStatusPollEnqueue = 0;
+    }
+
+    // 순차 큐잉: 큐에 여유 있고 200ms 경과 시 1개씩 큐잉
+    if (statusPollIndex >= 0)
+    {
+      if (getRS485CommandQueueDepth() < RS485_COMMAND_QUEUE_SIZE - 1 &&
+          (lastStatusPollEnqueue == 0 ||
+           millis() - lastStatusPollEnqueue >= STATUS_POLL_PACKET_INTERVAL_MS))
+      {
+        uint8_t pkt[11];
+        memcpy_P(pkt, POLL_PACKETS[statusPollIndex], 11);
+        enqueueRS485Command(pkt, 11, COMMAND_SOURCE_POLL);
+        lastStatusPollEnqueue = millis();
+        statusPollIndex++;
+        if (statusPollIndex >= NUM_POLL_PACKETS)
+        {
+          statusPollIndex = -1;
+          lastStatusPollTime = millis();
         }
       }
     }
