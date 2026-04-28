@@ -1,10 +1,12 @@
-# Wemos D1 mini를 사용한 아파트 월패드 RS485-MQTT 브릿지 모듈
+# 아파트 월패드 RS485-MQTT 브릿지 모듈
 
 ## 1. 프로젝트 개요
 
 아파트 내부 RS485 네트워크(월패드-각 가전기기 간 통신)에 접속하여 데이터를 모니터링하고 제어 명령을 전달하는 하이브리드 IoT 게이트웨이 구축.
 
 ## 2. 시스템 아키텍처
+
+지원 보드: **Wemos D1 Mini (ESP8266)**, **ESP-12E (ESP8266)**, **ESP32**
 
 Physical Layer: 월패드 RS485 라인 (9600bps, 12V 전원부 활용)
 Transport Layer: WiFi (802.11 b/g/n)
@@ -25,7 +27,7 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
   - `GET /api/devices`: 모든 장치 상태 조회
 - **영구 저장**: LittleFS 파일시스템 (256KB, config.json)
 
-### 3.2 RS485 통신 및 디버깅
+### 3.2 RS485 통신 및 디버깅 (보드별 시리얼 방식)
 
 - **양방향 프로토콜 브릿지**:
   - RS485 → MQTT: 수신 패킷을 파싱하여 MQTT Topic으로 발행
@@ -42,7 +44,9 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
   - HEX 포맷 패킷 표시 및 장치 타입/명령 디코딩
   - `/api/rs485/send`: HEX 문자열 직접 송신 (F7…EE 프레임 검증 후 큐 추가)
   - `/api/rs485/diag`: TX 큐 통계 실시간 조회
-- **Binary 센서**: D5/D6/D7 핀을 통한 3채널 접점 신호 감지 (Pull-up, 12V 입력)
+- **Binary 센서**: 3채널 접점 신호 감지 (Pull-up, 12V 입력)
+  - D1 Mini / ESP-12E: D5 / D6 / D7 (GPIO14 / GPIO12 / GPIO13)
+  - ESP32: GPIO25 / GPIO26 / GPIO27
 
 ### 3.3 Home Assistant 연동
 
@@ -100,21 +104,52 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 
 ### 4.1 주요 부품 리스트
 
-- MCU: Wemos D1 Mini (ESP8266)
+- MCU: **Wemos D1 Mini** 또는 **ESP-12E** (ESP8266) 또는 **ESP32** 개발 보드 중 선택
 - Interface: XY-017 RS485-TTL 컨버터 (자동 방향 제어 기능 포함)
 - Power: 12V to 5V DC-DC Stepdown (AMS1117-5V 사용 시 방열 주의, 고효율을 위해 Buck Converter 권장)
 - Input Protection: 바이너리 센싱용 포토커플러 회로 (12V 입력 대응)
 
 ### 4.2 핀 맵 (Pin Mapping)
 
-| 기능            | Wemos D1 Mini | GPIO   | 비고                                   |
-| :-------------- | :------------ | :----- | :------------------------------------- |
-| **RS485 RX**    | **D2**        | GPIO4  | SoftwareSerial RX (12V 레벨 변환 필수) |
-| **RS485 TX**    | **D1**        | GPIO5  | SoftwareSerial TX                      |
-| **Binary In 1** | **D5**        | GPIO14 | 12V 신호 입력 (포토커플러 경유)        |
-| **Binary In 2** | **D6**        | GPIO12 | 12V 신호 입력 (포토커플러 경유)        |
-| **Binary In 3** | **D7**        | GPIO13 | 12V 신호 입력 (포토커플러 경유)        |
-| **Power In**    | **5V / GND**  | -      | AMS1117-5V 출력 연결                   |
+#### Wemos D1 Mini (SoftwareSerial — `USE_SOFTWARE_SERIAL`)
+
+| 기능            | 핀       | GPIO   | 비고                                   |
+| :-------------- | :------- | :----- | :------------------------------------- |
+| **RS485 RX**    | D2       | GPIO4  | SoftwareSerial RX (12V 레벨 변환 필수) |
+| **RS485 TX**    | D1       | GPIO5  | SoftwareSerial TX                      |
+| **Binary In 1** | D5       | GPIO14 | 12V 신호 입력 (포토커플러 경유)        |
+| **Binary In 2** | D6       | GPIO12 | 12V 신호 입력 (포토커플러 경유)        |
+| **Binary In 3** | D7       | GPIO13 | 12V 신호 입력 (포토커플러 경유)        |
+| **Power In**    | 5V / GND | -      | AMS1117-5V 출력 연결                   |
+
+#### ESP-12E (HardwareSerial UART0 swap — `USE_HW_SERIAL_SWAP`)
+
+> UART0 핀이 GPIO1(TX)/GPIO3(RX)에서 **GPIO15(TX)/GPIO13(RX)** 으로 스왑됩니다.
+> 초기 플래싱은 기본 UART0 핀(GPIO1/GPIO3)으로 진행하고, 이후 OTA를 활용하세요.
+
+| 기능            | GPIO      | 비고                               |
+| :-------------- | :-------- | :--------------------------------- |
+| **RS485 RX**    | GPIO13    | UART0 swap RX (12V 레벨 변환 필수) |
+| **RS485 TX**    | GPIO15    | UART0 swap TX                      |
+| **Binary In 1** | GPIO14    | 12V 신호 입력 (포토커플러 경유)    |
+| **Binary In 2** | GPIO12    | 12V 신호 입력 (포토커플러 경유)    |
+| **Binary In 3** | GPIO13    | ⚠ RS485 RX와 충돌 — 재배치 필요    |
+| **Power In**    | 3V3 / GND | -                                  |
+
+> ⚠ ESP-12E에서 GPIO13이 RS485 RX와 Binary In 1을 공유합니다.  
+> Binary 센서 3채널 모두 사용할 경우 별도 핀(예: GPIO4, GPIO5, GPIO14)으로 재배치하고  
+> `main.cpp` 상단 `BINARY_PIN_*` 정의를 수정하세요.
+
+#### ESP32 (`esp32dev` — HardwareSerial2)
+
+| 기능            | GPIO     | 비고                                   |
+| :-------------- | :------- | :------------------------------------- |
+| **RS485 RX**    | GPIO16   | Serial2 RX (3.3V 로직, 레벨 변환 필수) |
+| **RS485 TX**    | GPIO17   | Serial2 TX                             |
+| **Binary In 1** | GPIO25   | 12V 신호 입력 (포토커플러 경유)        |
+| **Binary In 2** | GPIO26   | 12V 신호 입력 (포토커플러 경유)        |
+| **Binary In 3** | GPIO27   | 12V 신호 입력 (포토커플러 경유)        |
+| **Power In**    | 5V / GND | -                                      |
 
 ## 5. 소프트웨어 스택 (Library Stack)
 
@@ -122,7 +157,10 @@ PlatformIO 환경에서 다음 라이브러리를 조합하여 구현합니다.
 
 Framework: Arduino
 
-Async WebServer: ESPAsyncWebServer & ESPAsyncTCP (비동기 처리로 시리얼 데이터 유실 방지)
+Async WebServer:
+
+- ESP8266: ESPAsyncWebServer + ESPAsyncTCP
+- ESP32: ESPAsyncWebServer + AsyncTCP
 
 MQTT Client: PubSubClient
 
@@ -130,7 +168,56 @@ JSON Parser: ArduinoJson
 
 File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 
-### 4.3 회로
+## 6. 빌드 및 플래시 방법
+
+### 6.1 환경(env) 목록
+
+| env 이름  | 보드          | 시리얼 방식     | OTA 대응      |
+| :-------- | :------------ | :-------------- | :------------ |
+| `d1_mini` | Wemos D1 Mini | SoftwareSerial  | `d1_mini_ota` |
+| `esp12e`  | ESP-12E       | UART0 swap      | `esp12e_ota`  |
+| `esp32`   | ESP32 Dev     | HardwareSerial2 | `esp32_ota`   |
+
+### 6.2 펌웨어 빌드
+
+```bash
+# D1 Mini
+pio run -e d1_mini
+
+# ESP-12E
+pio run -e esp12e
+
+# ESP32
+pio run -e esp32
+```
+
+### 6.3 펌웨어 유선 업로드
+
+```bash
+# D1 Mini
+pio run -e d1_mini -t upload
+
+# ESP-12E
+pio run -e esp12e -t upload
+
+# ESP32
+pio run -e esp32 -t upload
+```
+
+### 6.4 파일시스템(LittleFS) 업로드
+
+```bash
+# D1 Mini
+pio run -e d1_mini -t buildfs && pio run -e d1_mini -t uploadfs
+
+# ESP-12E
+pio run -e esp12e -t buildfs && pio run -e esp12e -t uploadfs
+
+# ESP32
+pio run -e esp32 -t buildfs && pio run -e esp32 -t uploadfs
+```
+
+### 4.3 회로 (D1 Mini 기준)
 
 ```.
 [ 12V DC POWER ]                [ DC-DC BUCK CONVERTER ]
@@ -232,26 +319,39 @@ File System: LittleFS (SPIFFS 대비 안정성 및 속도 우위)
 - `OTA_PASSWORD`를 빈 문자열로 두면 인증 없이 OTA 업로드가 허용됩니다.
 - 운영 환경에서는 반드시 강한 비밀번호를 설정하세요.
 
-### 8.2 OTA 업로드
+### 8.2 OTA 펌웨어 업로드
 
-장치가 WiFi에 연결된 상태에서 아래 명령으로 OTA 업로드할 수 있습니다.
+장치가 WiFi에 연결된 상태에서 아래 명령으로 OTA 업로드합니다.  
+`upload_port`는 `platformio.ini`의 `[env:*_ota]` 섹션에서 설정합니다.
 
 ```bash
+# D1 Mini
 pio run -e d1_mini_ota -t upload
+
+# ESP-12E
+pio run -e esp12e_ota -t upload
+
+# ESP32
+pio run -e esp32_ota -t upload
 ```
 
-### 8.3 LittleFS(filesystem) OTA 업로드
-
-`data/` 폴더 내용을 OTA로 반영할 때는 아래 명령을 사용합니다.
+### 8.3 LittleFS OTA 업로드
 
 ```bash
-pio run -e d1_mini_ota_fs -t uploadfs
+# D1 Mini
+pio run -e d1_mini_ota -t uploadfs
+
+# ESP-12E
+pio run -e esp12e_ota -t uploadfs
+
+# ESP32
+pio run -e esp32_ota -t uploadfs
 ```
 
-직접 주소를 지정하려면 다음 명령도 사용할 수 있습니다.
+직접 IP를 지정할 경우:
 
 ```bash
-pio run -e d1_mini_ota_fs -t uploadfs --upload-port <장치_IP>
+pio run -e <env>_ota -t uploadfs --upload-port <장치_IP>
 ```
 
 ## 9. 참고 문서 (References)
@@ -271,12 +371,23 @@ MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
 
 ## 📝 알려진 제한사항
 
-- **메모리**: ESP8266 제한으로 동시 처리 가능한 장치 수 제한
-- **RS485**: SoftwareSerial 사용으로 9600bps 제한
-- **WebSocket**: 동시 연결 클라이언트 수 제한 (최대 3개)
-- **LittleFS**: 256KB 파일시스템 용량
+| 항목                  | D1 Mini / ESP-12E (ESP8266)                                     | ESP32                                |
+| :-------------------- | :-------------------------------------------------------------- | :----------------------------------- |
+| **메모리**            | 힙 ~45KB — 동시 처리 장치 수 제한                               | 힙 ~270KB — 여유 있음                |
+| **RS485**             | SoftwareSerial(D1 Mini) 9600bps 제한 / ESP-12E는 HardwareSerial | HardwareSerial2, 고속 baud 지원 가능 |
+| **WebSocket**         | 동시 연결 최대 8개 (메모리 제약)                                | 동시 연결 여유 있음                  |
+| **LittleFS**          | 1MB 파티션 (4M flash 기준)                                      | 파티션 테이블 설정에 따라 가변       |
+| **ESP-12E Binary In** | GPIO13이 RS485 RX 겸용 — 3채널 모두 필요 시 핀 재배치 필요      | 해당 없음                            |
 
 ## ✅ 최근 해결된 이슈
+
+### 2026-04-28: ESP12e / ESP32 멀티보드 지원 추가
+
+- **플랫폼 분기**: `#ifdef ESP32` / `USE_SOFTWARE_SERIAL` / `USE_HW_SERIAL_SWAP` 빌드 플래그로 단일 코드베이스에서 3개 보드 지원
+- **ESP12e**: UART0 swap(GPIO13=RX, GPIO15=TX) HardwareSerial 적용 — SoftwareSerial 타이밍 오류 없음
+- **ESP32**: Serial2(GPIO16=RX, GPIO17=TX) + Binary 센서 GPIO25/26/27 적용
+- **platformio.ini**: `[common_esp8266]` 공통 섹션 추출, `[env:esp32]` / `[env:esp32_ota]` 신설
+- **메모리 임계값**: ESP32 `WS_MEMORY_GUARD_THRESHOLD` 50000으로 상향
 
 ### 2026-03-22: RS485 제어/모니터링 정합성 개선
 

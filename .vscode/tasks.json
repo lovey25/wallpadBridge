@@ -1,16 +1,47 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "Build d1_mini",
-			"type": "shell",
-			"command": "platformio",
-			"args": [
-				"run",
-				"-e",
-				"d1_mini"
-			],
-			"isBackground": false
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build d1_mini",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "d1_mini"],
+      "isBackground": false
+    },
+    {
+      "label": "Build FS d1_mini",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "d1_mini", "-t", "buildfs"],
+      "isBackground": false
+    },
+    {
+      "label": "Upload FS d1_mini",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "d1_mini", "-t", "uploadfs"],
+      "isBackground": false
+    },
+    {
+      "label": "Build esp12e",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "esp12e"],
+      "isBackground": false
+    },
+    {
+      "label": "Build FS esp12e",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "esp12e", "-t", "buildfs"],
+      "isBackground": false
+    },
+    {
+      "label": "Upload FS esp12e",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "esp12e", "-t", "uploadfs"],
+      "isBackground": false
+    }
+  ]
 }

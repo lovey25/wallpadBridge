@@ -1,24 +1,45 @@
 #include "credentials.h"
 #include <Arduino.h>
+#ifdef ESP32
+#include <WiFi.h>
+#include <esp_wifi.h>
+#else
 #include <ESP8266WiFi.h>
+#ifdef USE_SOFTWARE_SERIAL
+#include <SoftwareSerial.h>
+#endif
+#endif
 #include <ArduinoOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Ticker.h>
-#include <SoftwareSerial.h>
 #include "checksum.h"
 #include "rs485_parser.h"
 #include "device_decoder.h"
 #include "device_manager.h"
 #include "command_builder.h"
 
-// 설정
-// RS485는 SoftwareSerial(D2=RX, D1=TX) 사용
+// ─── RS485 시리얼 객체 ────────────────────────────────────────
+// D1 Mini  : SoftwareSerial (D2=RX, D1=TX)
+// ESP12e   : HardwareSerial UART0 swap (GPIO13=RX, GPIO15=TX)
+// ESP32    : HardwareSerial UART2 (GPIO16=RX, GPIO17=TX)
+#if defined(USE_SOFTWARE_SERIAL)
 SoftwareSerial rs485(D2, D1);
+#elif defined(ESP32)
+HardwareSerial rs485(2);
+#else
+// USE_HW_SERIAL_SWAP: UART0 핀을 GPIO13(RX)/GPIO15(TX)로 스왑
+HardwareSerial &rs485 = Serial;
+#endif
+
 const uint8_t MAX_WS_CLIENTS = 8;
+#ifdef ESP32
+const uint32_t WS_MEMORY_GUARD_THRESHOLD = 50000;
+#else
 const uint32_t WS_MEMORY_GUARD_THRESHOLD = 15000;
+#endif
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 WiFiClient espClient;
@@ -38,9 +59,15 @@ RS485Parser parser;
 DeviceManager deviceManager;
 
 // Binary 센서 핀
+#ifdef ESP32
+const int BINARY_PIN_1 = 25;
+const int BINARY_PIN_2 = 26;
+const int BINARY_PIN_3 = 27;
+#else
 const int BINARY_PIN_1 = D5;
 const int BINARY_PIN_2 = D6;
 const int BINARY_PIN_3 = D7;
+#endif
 bool binarySensor1 = false;
 bool binarySensor2 = false;
 bool binarySensor3 = false;
@@ -1248,8 +1275,18 @@ void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void 
 
 void setup()
 {
-  // RS485 SoftwareSerial 시작 (9600 baud)
+  // RS485 시리얼 시작 (9600 baud)
+  // D1 Mini  : SoftwareSerial → begin(9600) 그대로
+  // ESP12e   : UART0 swap → begin 후 Serial.swap() 으로 핀 전환
+  // ESP32    : Serial2 → begin(baud, config, rx_pin, tx_pin)
+#if defined(ESP32)
+  rs485.begin(9600, SERIAL_8N1, 16, 17);
+#elif defined(USE_HW_SERIAL_SWAP)
   rs485.begin(9600);
+  Serial.swap(); // UART0: GPIO1/GPIO3 → GPIO15(TX)/GPIO13(RX)
+#else
+  rs485.begin(9600);
+#endif
 
   // LittleFS 초기화
   // Serial.println("\n=== Wallpad Bridge Starting ==="); // 디버그 비활성화
