@@ -559,6 +559,11 @@ void setupOTA()
                        otaInProgress = true;
                        shouldCheckWifiConnection = false;
                        shouldCheckMqttConnection = false;
+                       // FS OTA 시 LittleFS를 먼저 언마운트해야 덮어쓰기 가능
+                       if (ArduinoOTA.getCommand() == U_FS)
+                       {
+                         LittleFS.end();
+                       }
                        if (mqtt.connected())
                        {
                          mqtt.publish("home/wallpad/status", "updating", true);
@@ -1438,7 +1443,10 @@ void setup()
     json += "\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
     json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
     json += "\"ssid\":\"" + WiFi.SSID() + "\",";
-    json += "\"rssi\":" + String(WiFi.RSSI());
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"mqtt_connected\":" + String(mqtt.connected() ? "true" : "false") + ",";
+    json += "\"uptime_ms\":" + String(millis()) + ",";
+    json += "\"free_heap\":" + String(ESP.getFreeHeap());
     json += "}";
     r->send(200, "application/json", json); });
 

@@ -131,35 +131,6 @@
         padding: 2px 6px;
         border-radius: 3px;
       }
-      header {
-        margin-bottom: 30px;
-      }
-      nav {
-        display: flex;
-        gap: 10px;
-        margin-top: 15px;
-        padding: 10px 0;
-        border-top: 1px solid #444;
-      }
-      nav a {
-        padding: 8px 16px;
-        background: rgba(42, 42, 62, 0.8);
-        border: 1px solid #444;
-        border-radius: 6px;
-        text-decoration: none;
-        color: #66b3ff;
-        transition: all 0.3s;
-      }
-      nav a:hover {
-        background: rgba(52, 52, 72, 0.9);
-        border-color: #0066cc;
-        text-decoration: none;
-      }
-      nav a.active {
-        background: #0066cc;
-        color: white;
-        border-color: #0066cc;
-      }
       .info-section {
         margin-top: 30px;
       }
@@ -223,16 +194,15 @@
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>⚙️ 시스템 설정</h1>
-        <nav>
-          <a href="/">대시보드</a>
-          <a href="/monitor.htm">모니터</a>
-          <a href="/config.htm" class="active">설정</a>
-        </nav>
-      </header>
-
+    <div class="topbar">
+      <span class="topbar-title">⚙️ 시스템 설정</span>
+      <nav class="topbar-nav">
+        <a href="/">대시보드</a>
+        <a href="/monitor.htm">모니터</a>
+        <a href="/config.htm" class="active">설정</a>
+      </nav>
+    </div>
+    <div class="page-content">
       <main>
         <div id="statusMessage" class="status-message"></div>
 

@@ -42,6 +42,36 @@
       "command": "platformio",
       "args": ["run", "-e", "esp12e", "-t", "uploadfs"],
       "isBackground": false
+    },
+    {
+      "label": "Upload (OTA) d1_mini_ota",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "d1_mini_ota", "-t", "upload"],
+      "isBackground": false
+    },
+    {
+      "label": "Upload FS (OTA) d1_mini_ota",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "d1_mini_ota", "-t", "uploadfs"],
+      "isBackground": false,
+      "detail": "uploadfsota 대신 uploadfs 타겟 사용 — PlatformIO 버그 우회 (-s 플래그 정상 전달)"
+    },
+    {
+      "label": "Upload (OTA) esp12e_ota",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "esp12e_ota", "-t", "upload"],
+      "isBackground": false
+    },
+    {
+      "label": "Upload FS (OTA) esp12e_ota",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "-e", "esp12e_ota", "-t", "uploadfs"],
+      "isBackground": false,
+      "detail": "uploadfsota 대신 uploadfs 타겟 사용 — PlatformIO 버그 우회 (-s 플래그 정상 전달)"
     }
   ]
 }

@@ -85,48 +85,18 @@
       .project-link {
         margin-top: 10px;
       }
-      header {
-        margin-bottom: 30px;
-      }
-      nav {
-        display: flex;
-        gap: 10px;
-        margin-top: 15px;
-        padding: 10px 0;
-        border-top: 1px solid #444;
-      }
-      nav a {
-        padding: 8px 16px;
-        background: rgba(42, 42, 62, 0.8);
-        border: 1px solid #444;
-        border-radius: 6px;
-        text-decoration: none;
-        color: #66b3ff;
-        transition: all 0.3s;
-      }
-      nav a:hover {
-        background: rgba(52, 52, 72, 0.9);
-        border-color: #0066cc;
-        text-decoration: none;
-      }
-      nav a.active {
-        background: #0066cc;
-        color: white;
-        border-color: #0066cc;
-      }
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>🏠 Wallpad RS485 Bridge</h1>
-        <nav>
-          <a href="/" class="active">대시보드</a>
-          <a href="/monitor.htm">모니터</a>
-          <a href="/config.htm">설정</a>
-        </nav>
-      </header>
-
+    <div class="topbar">
+      <span class="topbar-title">🏠 Wallpad Bridge</span>
+      <nav class="topbar-nav">
+        <a href="/" class="active">대시보드</a>
+        <a href="/monitor.htm">모니터</a>
+        <a href="/config.htm">설정</a>
+      </nav>
+    </div>
+    <div class="page-content">
       <div class="card">
         <h3>시스템 상태</h3>
         <div class="system-info">
@@ -204,6 +174,7 @@
         fetch("/wifistatus")
           .then((res) => res.json())
           .then((data) => {
+            // WiFi
             const wifiStatus = document.getElementById("wifiStatus");
             if (data.connected) {
               wifiStatus.textContent = "연결됨";
@@ -211,6 +182,34 @@
             } else {
               wifiStatus.textContent = "AP 모드";
               wifiStatus.style.color = "#f59e0b";
+            }
+
+            // MQTT
+            const mqttEl = document.getElementById("mqttStatus");
+            if (data.mqtt_connected) {
+              mqttEl.textContent = "연결됨";
+              mqttEl.style.color = "#10b981";
+            } else {
+              mqttEl.textContent = "끊김";
+              mqttEl.style.color = "#f87171";
+            }
+
+            // 작동시간
+            if (data.uptime_ms !== undefined) {
+              const totalSec = Math.floor(data.uptime_ms / 1000);
+              const h = Math.floor(totalSec / 3600);
+              const m = Math.floor((totalSec % 3600) / 60);
+              const s = totalSec % 60;
+              const pad = (n) => String(n).padStart(2, "0");
+              document.getElementById("uptime").textContent = `${pad(h)}:${pad(m)}:${pad(s)}`;
+              document.getElementById("uptime").style.color = "#0066cc";
+            }
+
+            // 메모리 (Heap)
+            if (data.free_heap !== undefined) {
+              const kb = (data.free_heap / 1024).toFixed(1);
+              document.getElementById("memory").textContent = `${kb}K`;
+              document.getElementById("memory").style.color = data.free_heap < 15000 ? "#f87171" : "#10b981";
             }
           })
           .catch((err) => {
@@ -296,14 +295,6 @@
       window.onload = function () {
         loadSystemStatus();
         loadDevices();
-
-        // MQTT 상태는 임시로 표시
-        document.getElementById("mqttStatus").textContent = "대기";
-        document.getElementById("mqttStatus").style.color = "#888";
-
-        // 작동시간과 메모리는 ESP에서 직접 제공하지 않으므로 임시 표시
-        document.getElementById("uptime").textContent = "-";
-        document.getElementById("memory").textContent = "-";
 
         // 5초마다 자동 새로고침
         setInterval(() => {

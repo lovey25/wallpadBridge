@@ -5,74 +5,289 @@
     <title>RS485 Monitor - Wallpad Bridge</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/style.css" />
+    <style>
+      body.monitor-body {
+        padding: 0;
+      }
+
+      .monitor-page {
+        min-height: 100vh;
+      }
+
+      .monitor-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 0 8px 8px;
+      }
+
+      .panel-left,
+      .panel-right {
+        min-width: 0;
+      }
+
+      @media (min-width: 900px) {
+        body.monitor-body {
+          overflow: hidden;
+        }
+
+        .monitor-page {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+        }
+
+        .monitor-layout {
+          display: grid;
+          grid-template-columns: 2fr 3fr;
+          align-items: stretch;
+          flex: 1;
+          min-height: 0;
+          gap: 12px;
+          padding: 0 10px 10px;
+          overflow: hidden;
+        }
+
+        .panel-left {
+          overflow-y: auto;
+          min-height: 0;
+          padding-right: 2px;
+        }
+
+        .panel-right {
+          display: flex;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .panel-right .console-card {
+          display: flex;
+          flex: 1;
+          flex-direction: column;
+          margin-bottom: 0;
+          min-height: 0;
+        }
+
+        .panel-right .console-full {
+          flex: 1;
+          min-height: 0;
+          height: auto;
+        }
+      }
+
+      /* 콘솔 툴바 (지우기/자동스크롤) */
+      .console-toolbar {
+        display: flex;
+        gap: 6px;
+        padding: 4px 0 2px;
+        flex-shrink: 0;
+      }
+
+      /* 하단 명령 프롬프트 */
+      .cmd-prompt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px;
+        background: rgba(0, 0, 0, 0.35);
+        border-top: 1px solid #2a2a4a;
+        border-radius: 0 0 8px 8px;
+        flex-shrink: 0;
+      }
+
+      .cmd-prompt-prefix {
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        color: #00ff88;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .cmd-prompt input {
+        flex: 1;
+        margin: 0;
+        padding: 5px 8px;
+        font-size: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid #333;
+        border-radius: 4px;
+        color: #eee;
+        min-width: 0;
+      }
+
+      .cmd-prompt button {
+        padding: 5px 14px;
+        font-size: 12px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      /* 좁은 화면에서 diag 숨기기 */
+      @media (max-width: 699px) {
+        #diagCompact {
+          display: none;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <div class="container">
-      <header>
-        <h1>📡 RS485 실시간 모니터</h1>
-        <nav>
+  <body class="monitor-body">
+    <div class="monitor-page">
+      <div class="topbar">
+        <span class="topbar-title">📡 RS485 모니터</span>
+        <nav class="topbar-nav">
           <a href="/">대시보드</a>
           <a href="/monitor.htm" class="active">모니터</a>
           <a href="/config.htm">설정</a>
         </nav>
-      </header>
-
-      <div class="card">
-        <h3>
-          <span id="wsStatus" class="status-indicator status-disconnected"></span>
-          WebSocket 상태: <span id="wsStatusText">연결 중...</span>
-        </h3>
-      </div>
-
-      <div class="card">
-        <h3>전송 진단</h3>
-        <div id="txDiagPanel" class="hint-text">
-          상태: <span id="diagStatus">확인 중...</span><br />
-          큐: <span id="diagDepth">-</span> / 피크: <span id="diagPeak">-</span><br />
-          누적 전송: <span id="diagSent">-</span> / 누적 큐잉: <span id="diagQueued">-</span><br />
-          드롭: <span id="diagDropped">-</span> / 버스대기: <span id="diagBlocked">-</span> / 강제TX:
-          <span id="diagForced">-</span><br />
-          Heap: <span id="diagHeap">-</span> / RS485 idle(ms): <span id="diagIdle">-</span>
+        <div class="topbar-meta">
+          <!-- WS 연결 상태: 항상 표시 -->
+          <div class="topbar-ws">
+            <span id="wsStatus" class="status-dot disconnected"></span>
+            <span id="wsStatusText">연결 중...</span>
+          </div>
+          <!-- 진단 항목: renderTxDiag가 개별 span으로 채움 -->
+          <div id="diagCompact" class="diag-items">
+            <span class="diag-item" style="color: #555">진단 로딩...</span>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h3>필터</h3>
-        <div class="filter-buttons">
-          <button class="filter-btn active" onclick="toggleFilter('rx')">📥 RX (수신)</button>
-          <button class="filter-btn active" onclick="toggleFilter('tx')">📤 TX (송신)</button>
-          <button class="filter-btn active" onclick="toggleFilter('state')">🔄 상태 변경</button>
-          <button class="filter-btn active" onclick="toggleFilter('error')">⚠️ 에러</button>
-        </div>
-      </div>
+      <div class="monitor-layout">
+        <!-- 좌측 패널: 컨트롤 -->
+        <div class="panel-left">
+          <div class="card">
+            <h3>필터</h3>
+            <div class="filter-buttons">
+              <button class="filter-btn active" onclick="toggleFilter('rx')">📥 RX</button>
+              <button class="filter-btn active" onclick="toggleFilter('tx')">📤 TX</button>
+              <button class="filter-btn active" onclick="toggleFilter('state')">🔄 상태</button>
+              <button class="filter-btn active" onclick="toggleFilter('error')">⚠️ 에러</button>
+            </div>
+          </div>
 
-      <div class="card">
-        <h3>로그 콘솔</h3>
-        <div id="console"></div>
-        <div class="controls">
-          <button onclick="clearConsole()" class="secondary">🗑️ 지우기</button>
-          <button onclick="toggleAutoScroll()" class="secondary" id="autoScrollBtn">⬇️ 자동스크롤: ON</button>
-        </div>
-      </div>
+          <div class="card">
+            <h3>빠른 테스트 명령</h3>
+            <div class="controls" style="flex-wrap: wrap">
+              <button onclick="sendQuickCmd('F70B01190140110000B4EE')">조명1 조회</button>
+              <button onclick="sendQuickCmd('F70B012B014011000086EE')">환기 조회</button>
+              <button onclick="sendQuickCmd('F70B01180145110000B0EE')">거실 난방 조회</button>
+            </div>
+          </div>
 
-      <div class="card">
-        <h3>RS485 명령 전송</h3>
-        <div class="controls">
-          <input type="text" id="cmdInput" placeholder="Hex 명령 입력 (예: F70B01190140110000B4EE)" />
-          <button onclick="sendCommand()">📤 전송</button>
-        </div>
-        <p class="hint-text">💡 팁: 공백 없이 Hex 값만 입력하세요. 프로토콜은 wallpad_protocol.md 참고</p>
-      </div>
+          <!-- 알려진 코드 숨기기 -->
+          <div class="card">
+            <h3>알려진 코드 숨기기</h3>
+            <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 8px">
+              <button id="hideKnownBtn" class="filter-btn" onclick="toggleHideKnown()">숨기기: OFF</button>
+            </div>
+            <div style="display: flex; gap: 6px; margin-bottom: 6px">
+              <input
+                type="text"
+                id="knownCodeInput"
+                placeholder="HEX (예: F70B01190140...EE)"
+                style="margin: 0; font-size: 12px"
+              />
+              <button onclick="addKnownCode()" style="padding: 6px 10px; white-space: nowrap">추가</button>
+            </div>
+            <div id="knownCodeList" class="small-list"></div>
+          </div>
 
-      <div class="card">
-        <h3>빠른 테스트 명령</h3>
-        <div class="controls">
-          <button onclick="sendQuickCmd('F70B01190140110000B4EE')">조명1 조회</button>
-          <button onclick="sendQuickCmd('F70B012B014011000086EE')">환기 조회</button>
-          <button onclick="sendQuickCmd('F70B01180145110000B0EE')">거실 난방 조회</button>
+          <!-- HEX 바이트 필터 -->
+          <div class="card">
+            <h3>HEX 바이트 필터</h3>
+            <p class="hint-text" style="margin-bottom: 6px">
+              바이트 위치(0=F7), HEX 값, 조건을 설정하세요. 여러 룰은 AND 조건입니다.
+            </p>
+            <div style="display: flex; gap: 4px; margin-bottom: 6px; align-items: center; flex-wrap: wrap">
+              <input
+                type="number"
+                id="hfBytePos"
+                min="0"
+                placeholder="위치"
+                style="width: 56px; margin: 0; font-size: 12px; padding: 6px"
+              />
+              <input
+                type="text"
+                id="hfHexVal"
+                placeholder="HEX값(예:F7)"
+                style="width: 80px; margin: 0; font-size: 12px; padding: 6px"
+              />
+              <select
+                id="hfMode"
+                style="
+                  width: 80px;
+                  margin: 0;
+                  font-size: 12px;
+                  padding: 6px;
+                  background: #2a2a3e;
+                  color: #fff;
+                  border: 1px solid #444;
+                  border-radius: 6px;
+                "
+              >
+                <option value="match">일치</option>
+                <option value="nomatch">불일치</option>
+              </select>
+              <button onclick="addHexFilter()" style="padding: 6px 10px; white-space: nowrap">추가</button>
+            </div>
+            <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
+              <button id="hfEnableBtn" class="filter-btn" onclick="toggleHexFilters()">HEX 필터: OFF</button>
+            </div>
+            <div id="hexFilterList" class="small-list"></div>
+          </div>
+
+          <!-- HEX → 십진수 분석 -->
+          <div class="card">
+            <h3>HEX → 십진수 분석</h3>
+            <p class="hint-text" style="margin-bottom: 6px">바이트 범위를 지정하면 로그 끝에 십진수 값이 추가됩니다.</p>
+            <div style="display: flex; gap: 4px; margin-bottom: 6px; align-items: center; flex-wrap: wrap">
+              <input
+                type="text"
+                id="arLabel"
+                placeholder="레이블"
+                style="width: 70px; margin: 0; font-size: 12px; padding: 6px"
+              />
+              <input
+                type="number"
+                id="arStart"
+                min="0"
+                placeholder="시작"
+                style="width: 50px; margin: 0; font-size: 12px; padding: 6px"
+              />
+              <input
+                type="number"
+                id="arEnd"
+                min="0"
+                placeholder="끝"
+                style="width: 50px; margin: 0; font-size: 12px; padding: 6px"
+              />
+              <button onclick="addAnalyzeRule()" style="padding: 6px 10px; white-space: nowrap">추가</button>
+            </div>
+            <div id="analyzeRuleList" class="small-list"></div>
+          </div>
         </div>
+        <!-- /panel-left -->
+
+        <!-- 우측 패널: 로그 콘솔 -->
+        <div class="panel-right">
+          <div class="card console-card">
+            <h3>로그 콘솔</h3>
+            <div id="console" class="console-full"></div>
+            <div class="console-toolbar">
+              <button onclick="clearConsole()" class="secondary">🗑️ 지우기</button>
+              <button onclick="toggleAutoScroll()" class="secondary" id="autoScrollBtn">⬇️ 자동스크롤: ON</button>
+            </div>
+            <div class="cmd-prompt">
+              <span class="cmd-prompt-prefix">TX&gt;</span>
+              <input type="text" id="cmdInput" placeholder="Hex 명령 입력 (공백 없이, 예: F70B01190140110000B4EE)" />
+              <button onclick="sendCommand()">전송</button>
+            </div>
+          </div>
+        </div>
+        <!-- /panel-right -->
       </div>
+      <!-- /monitor-layout -->
     </div>
+    <!-- /monitor-page -->
 
     <script>
       // WebSocket 변수
@@ -84,6 +299,198 @@
       let connectTimeoutTimer = null;
       let monitorPingTimer = null;
       let txDiagTimer = null;
+
+      // ── 알려진 코드 숨기기 ──────────────────────────────────────────
+      let knownCodes = JSON.parse(localStorage.getItem("knownCodes") || "[]");
+      // 구 형식(string[]) → 새 형식({code,hidden}[]) 마이그레이션
+      if (knownCodes.length && typeof knownCodes[0] === "string") {
+        knownCodes = knownCodes.map((c) => ({ code: c, hidden: true }));
+        localStorage.setItem("knownCodes", JSON.stringify(knownCodes));
+      }
+      let hideKnown = false;
+
+      function saveKnownCodes() {
+        localStorage.setItem("knownCodes", JSON.stringify(knownCodes));
+      }
+
+      function renderKnownCodes() {
+        const list = document.getElementById("knownCodeList");
+        list.innerHTML = "";
+        knownCodes.forEach((item, i) => {
+          const row = document.createElement("div");
+          row.className = "small-list-row";
+          const label = item.code.length > 16 ? item.code.slice(0, 16) + "…" : item.code;
+          row.innerHTML =
+            `<span class="mono" title="${item.code}">${label}</span>` +
+            `<button class="filter-btn${item.hidden ? " active" : ""}" style="padding:2px 7px;font-size:11px;margin-left:4px" onclick="toggleKnownHidden(${i})">${item.hidden ? "숨김" : "표시"}</button>` +
+            `<button class="del-btn" onclick="removeKnownCode(${i})">✕</button>`;
+          list.appendChild(row);
+        });
+      }
+
+      function addKnownCode() {
+        const input = document.getElementById("knownCodeInput");
+        const val = input.value.trim().replace(/\s/g, "").toUpperCase();
+        if (!val || knownCodes.some((k) => k.code === val)) {
+          input.value = "";
+          return;
+        }
+        knownCodes.push({ code: val, hidden: true });
+        saveKnownCodes();
+        renderKnownCodes();
+        input.value = "";
+      }
+
+      function removeKnownCode(i) {
+        knownCodes.splice(i, 1);
+        saveKnownCodes();
+        renderKnownCodes();
+      }
+
+      function toggleKnownHidden(i) {
+        knownCodes[i].hidden = !knownCodes[i].hidden;
+        saveKnownCodes();
+        renderKnownCodes();
+      }
+
+      function toggleHideKnown() {
+        hideKnown = !hideKnown;
+        const btn = document.getElementById("hideKnownBtn");
+        btn.textContent = `숨기기: ${hideKnown ? "ON" : "OFF"}`;
+        btn.classList.toggle("active", hideKnown);
+      }
+
+      function isKnownCode(hexStr) {
+        if (!hideKnown) return false;
+        const compact = hexStr.replace(/\s/g, "").toUpperCase();
+        return knownCodes.some((k) => k.hidden && (compact.includes(k.code) || k.code.includes(compact)));
+      }
+
+      // ── HEX 바이트 필터 ─────────────────────────────────────────────
+      let hexFilters = JSON.parse(localStorage.getItem("hexFilters") || "[]");
+      // 구 형식 마이그레이션 (enabled 필드 없으면 추가)
+      if (hexFilters.length && hexFilters[0].enabled === undefined) {
+        hexFilters = hexFilters.map((f) => ({ ...f, enabled: true }));
+        localStorage.setItem("hexFilters", JSON.stringify(hexFilters));
+      }
+      let hexFiltersEnabled = false;
+
+      function saveHexFilters() {
+        localStorage.setItem("hexFilters", JSON.stringify(hexFilters));
+      }
+
+      function renderHexFilters() {
+        const list = document.getElementById("hexFilterList");
+        list.innerHTML = "";
+        hexFilters.forEach((f, i) => {
+          const row = document.createElement("div");
+          row.className = "small-list-row";
+          row.innerHTML =
+            `<span class="mono">byte[${f.pos}] ${f.mode === "match" ? "==" : "!="} ${f.hex}</span>` +
+            `<button class="filter-btn${f.enabled ? " active" : ""}" style="padding:2px 7px;font-size:11px;margin-left:4px" onclick="toggleHexFilterItem(${i})">${f.enabled ? "ON" : "OFF"}</button>` +
+            `<button class="del-btn" onclick="removeHexFilter(${i})">✕</button>`;
+          list.appendChild(row);
+        });
+      }
+
+      function addHexFilter() {
+        const pos = parseInt(document.getElementById("hfBytePos").value, 10);
+        const hex = document.getElementById("hfHexVal").value.trim().replace(/\s/g, "").toUpperCase();
+        const mode = document.getElementById("hfMode").value;
+        if (isNaN(pos) || !hex) return;
+        hexFilters.push({ pos, hex, mode, enabled: true });
+        saveHexFilters();
+        renderHexFilters();
+        document.getElementById("hfBytePos").value = "";
+        document.getElementById("hfHexVal").value = "";
+      }
+
+      function removeHexFilter(i) {
+        hexFilters.splice(i, 1);
+        saveHexFilters();
+        renderHexFilters();
+      }
+
+      function toggleHexFilterItem(i) {
+        hexFilters[i].enabled = !hexFilters[i].enabled;
+        saveHexFilters();
+        renderHexFilters();
+      }
+
+      function toggleHexFilters() {
+        hexFiltersEnabled = !hexFiltersEnabled;
+        const btn = document.getElementById("hfEnableBtn");
+        btn.textContent = `HEX 필터: ${hexFiltersEnabled ? "ON" : "OFF"}`;
+        btn.classList.toggle("active", hexFiltersEnabled);
+      }
+
+      // true이면 표시, false이면 차단
+      function passHexFilter(hexStr) {
+        if (!hexFiltersEnabled) return true;
+        const activeFilters = hexFilters.filter((f) => f.enabled);
+        if (activeFilters.length === 0) return true;
+        const bytes = hexStr.trim().split(/\s+/);
+        return activeFilters.every((f) => {
+          const actual = (bytes[f.pos] || "").toUpperCase();
+          return f.mode === "match" ? actual === f.hex : actual !== f.hex;
+        });
+      }
+
+      // ── HEX → 십진수 분석 ───────────────────────────────────────────
+      let analyzeRules = JSON.parse(localStorage.getItem("analyzeRules") || "[]");
+      // [{label: "온도", start: 7, end: 7}, ...]
+
+      function saveAnalyzeRules() {
+        localStorage.setItem("analyzeRules", JSON.stringify(analyzeRules));
+      }
+
+      function renderAnalyzeRules() {
+        const list = document.getElementById("analyzeRuleList");
+        list.innerHTML = "";
+        analyzeRules.forEach((r, i) => {
+          const row = document.createElement("div");
+          row.className = "small-list-row";
+          const range = r.start === r.end ? `byte[${r.start}]` : `byte[${r.start}..${r.end}]`;
+          row.innerHTML = `<span class="mono">${range} → ${r.label}</span><button class="del-btn" onclick="removeAnalyzeRule(${i})">✕</button>`;
+          list.appendChild(row);
+        });
+      }
+
+      function addAnalyzeRule() {
+        const label = document.getElementById("arLabel").value.trim();
+        const start = parseInt(document.getElementById("arStart").value, 10);
+        const end = parseInt(document.getElementById("arEnd").value, 10);
+        if (!label || isNaN(start) || isNaN(end)) return;
+        analyzeRules.push({ label, start, end: Math.max(start, end) });
+        saveAnalyzeRules();
+        renderAnalyzeRules();
+        document.getElementById("arLabel").value = "";
+        document.getElementById("arStart").value = "";
+        document.getElementById("arEnd").value = "";
+      }
+
+      function removeAnalyzeRule(i) {
+        analyzeRules.splice(i, 1);
+        saveAnalyzeRules();
+        renderAnalyzeRules();
+      }
+
+      // hexStr → 분석 주석 문자열 생성
+      function buildAnalyzeSuffix(hexStr) {
+        if (analyzeRules.length === 0) return "";
+        const bytes = hexStr.trim().split(/\s+/);
+        const parts = analyzeRules
+          .map((r) => {
+            const slice = bytes.slice(r.start, r.end + 1);
+            if (slice.length === 0 || slice.some((b) => !b)) return null;
+            const val = parseInt(slice.join(""), 16);
+            return isNaN(val) ? null : `${r.label}:${val}`;
+          })
+          .filter(Boolean);
+        return parts.length > 0 ? "  [" + parts.join(" | ") + "]" : "";
+      }
+
+      // ────────────────────────────────────────────────────────────────
 
       function sendMonitorPing() {
         fetch("/api/monitor/ping", {
@@ -122,30 +529,29 @@
       }
 
       function renderTxDiag(diag) {
-        document.getElementById("diagStatus").textContent =
-          `${diag.status || "-"}${diag.message ? " / " + diag.message : ""}`;
-        document.getElementById("diagDepth").textContent = diag.depth ?? "-";
-        document.getElementById("diagPeak").textContent = diag.peak ?? "-";
-        document.getElementById("diagSent").textContent = diag.sent ?? "-";
-        document.getElementById("diagQueued").textContent = diag.queued ?? "-";
-        document.getElementById("diagDropped").textContent = diag.dropped ?? "-";
-        document.getElementById("diagBlocked").textContent = diag.blocked ?? "-";
-        document.getElementById("diagForced").textContent = diag.forced ?? "-";
-        document.getElementById("diagHeap").textContent = diag.free_heap ?? "-";
-        document.getElementById("diagIdle").textContent = diag.rs485_idle_ms ?? "-";
+        const heap = diag.free_heap ? Math.round(diag.free_heap / 1024) + "K" : "-";
+        const statusMsg = (diag.status || "-") + (diag.message ? ` (${diag.message})` : "");
+        const items = [
+          `전송상태: ${statusMsg}`,
+          `큐 깊이: ${diag.depth ?? "-"} / 최대: ${diag.peak ?? "-"}`,
+          `누적: ${diag.sent ?? "-"}건`,
+          `드롭: ${diag.dropped ?? "-"}건`,
+          `메모리: ${heap}`,
+          `대기: ${diag.rs485_idle_ms ?? "-"}ms`,
+        ];
+        const sep = '<span class="diag-sep">│</span>';
+        document.getElementById("diagCompact").innerHTML = items
+          .map((t) => `<span class="diag-item">${t}</span>`)
+          .join(sep);
       }
 
       async function fetchTxDiag() {
         try {
-          const response = await fetch("/api/rs485/diag", { cache: "no-store" });
-          if (!response.ok) {
-            document.getElementById("diagStatus").textContent = `diag error ${response.status}`;
-            return;
-          }
-          const diag = await response.json();
-          renderTxDiag(diag);
-        } catch (error) {
-          document.getElementById("diagStatus").textContent = "diag network error";
+          const r = await fetch("/api/rs485/diag", { cache: "no-store" });
+          if (r.ok) renderTxDiag(await r.json());
+          else document.getElementById("diagCompact").textContent = `diag err ${r.status}`;
+        } catch (_) {
+          document.getElementById("diagCompact").textContent = "diag 오류";
         }
       }
 
@@ -225,6 +631,15 @@
           if (msg.startsWith("RX:")) {
             logClass = "log-rx";
             if (!filters.rx) return;
+            // RX 메시지에서 HEX 부분 추출: "RX: F7 0B ..." 또는 "RX: [INVALID] F7 0B ..."
+            const hexPart = msg.replace(/^RX:\s*(\[INVALID\]\s*)?/, "");
+            if (hideKnown && isKnownCode(hexPart)) return;
+            if (!passHexFilter(hexPart)) return;
+            const suffix = buildAnalyzeSuffix(hexPart);
+            if (suffix) {
+              addLog(msg + suffix, logClass);
+              return;
+            }
           } else if (msg.startsWith("TX")) {
             logClass = "log-tx";
             if (!filters.tx) return;
@@ -278,10 +693,19 @@
         }
       });
 
+      // 시간 포맷 HH:MM:SS (0-패딩 고정 2자리)
+      function fmtTime() {
+        const d = new Date();
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        return `${hh}:${mm}:${ss}`;
+      }
+
       // 로그 추가
       function addLog(message, className = "") {
         const console = document.getElementById("console");
-        const timestamp = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+        const timestamp = fmtTime();
         const logEntry = document.createElement("div");
         logEntry.className = className;
         logEntry.textContent = `[${timestamp}] ${message}`;
@@ -294,15 +718,8 @@
 
       // WebSocket 상태 업데이트
       function updateWSStatus(connected) {
-        const indicator = document.getElementById("wsStatus");
-        const text = document.getElementById("wsStatusText");
-        if (connected) {
-          indicator.className = "status-indicator status-connected";
-          text.textContent = "연결됨";
-        } else {
-          indicator.className = "status-indicator status-disconnected";
-          text.textContent = "연결 끊김";
-        }
+        document.getElementById("wsStatus").className = "status-dot " + (connected ? "connected" : "disconnected");
+        document.getElementById("wsStatusText").textContent = connected ? "연결됨" : "연결 끊김";
       }
 
       // 명령 전송
@@ -391,6 +808,11 @@
       // Enter 키로 전송 및 WebSocket 연결 시작
       document.addEventListener("DOMContentLoaded", function () {
         console.log("[MONITOR] DOM ready, starting WebSocket and attaching event listeners");
+
+        // 저장된 데이터 초기 렌더링
+        renderKnownCodes();
+        renderHexFilters();
+        renderAnalyzeRules();
 
         // 서버에 모니터 활성 상태를 먼저 알림
         startMonitorSession();

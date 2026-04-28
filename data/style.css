@@ -10,13 +10,149 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", sans-serif;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   color: #eee;
-  padding: 20px;
+  padding: 0;
   min-height: 100vh;
 }
 
 .container {
   max-width: 1000px;
   margin: 0 auto;
+}
+
+.page-content {
+  padding: 16px 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+/* ── Topbar 공통 ─────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+  background: rgba(20, 20, 40, 0.98);
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  width: 100%;
+  box-sizing: border-box;
+}
+.topbar-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  padding-right: 12px;
+  margin-right: 4px;
+  border-right: 1px solid #333;
+  flex-shrink: 0;
+}
+.topbar-nav {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.topbar-nav a {
+  padding: 3px 9px;
+  background: rgba(42, 42, 62, 0.8);
+  border: 1px solid #444;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #66b3ff;
+  text-decoration: none;
+  transition: border-color 0.2s;
+}
+.topbar-nav a:hover {
+  border-color: #0066cc;
+  color: #99ccff;
+}
+.topbar-nav a.active {
+  background: #0066cc;
+  color: #fff;
+  border-color: #0066cc;
+}
+.topbar-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  /* 우측 fade 마스크: 잘리는 내용 시각적 처리 */
+}
+.topbar-meta::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(to right, transparent, rgba(20, 20, 40, 0.98));
+  pointer-events: none;
+}
+/* WS 연결 상태 그룹 (항상 표시, flex-shrink:0) */
+.topbar-ws {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #aaa;
+  padding: 0 10px 0 6px;
+  margin-right: 4px;
+  border-right: 1px solid #333;
+}
+/* 진단 항목 컨테이너 */
+.diag-items {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+}
+.diag-item {
+  font-size: 11px;
+  color: #999;
+  padding: 0 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.diag-sep {
+  color: #444;
+  font-size: 12px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.status-dot.connected {
+  background: #00ff00;
+  box-shadow: 0 0 4px #00ff00;
+}
+.status-dot.disconnected {
+  background: #ff4444;
+}
+/* 구 호환: topbar-sep (index/config/wifi에서 사용 가능) */
+.topbar-sep {
+  color: #444;
+  padding: 0 4px;
 }
 
 h1 {
@@ -233,7 +369,7 @@ tr:hover {
 
 /* 반응형 디자인 */
 @media (max-width: 768px) {
-  body {
+  .page-content {
     padding: 10px;
   }
 
@@ -305,8 +441,9 @@ tr:hover {
   }
 }
 
-/* Monitor 페이지 전용 스타일 */
+/* Monitor 페이지 전용 스타일 (log color 등) */
 #console {
+  /* .console-full 클래스로 대체 — 하위 호환을 위해 유지 */
   height: 400px;
   background: #000;
   color: #0f0;
@@ -408,42 +545,202 @@ tr:hover {
   background: #ff4444;
 }
 
-/* Navigation 스타일 */
-header {
-  margin-bottom: 30px;
-}
-
-nav {
-  display: flex;
-  gap: 10px;
-  margin-top: 15px;
-  padding: 10px 0;
-  border-top: 1px solid #444;
-}
-
-nav a {
-  padding: 8px 16px;
-  background: rgba(42, 42, 62, 0.8);
-  border: 1px solid #444;
-  border-radius: 6px;
-  text-decoration: none;
-  color: #66b3ff;
-  transition: all 0.3s;
-}
-
-nav a:hover {
-  background: rgba(52, 52, 72, 0.9);
-  border-color: #0066cc;
-  text-decoration: none;
-}
-
-nav a.active {
-  background: #0066cc;
-  color: white;
-  border-color: #0066cc;
-}
-
 .hint-text {
   font-size: 12px;
   color: #888;
+}
+
+/* 소형 목록 (알려진 코드·HEX 필터·분석 룰 공통) */
+.small-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.small-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.mono {
+  font-family: "Courier New", monospace;
+  word-break: break-all;
+  color: #ccc;
+}
+
+button.del-btn {
+  padding: 0 6px;
+  height: 18px;
+  min-height: 0;
+  line-height: 18px;
+  background: #6b2222;
+  border: none;
+  border-radius: 3px;
+  color: #fca5a5;
+  font-size: 11px;
+  font-weight: normal;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 6px;
+  box-shadow: none;
+  transform: none;
+  transition: none;
+  vertical-align: middle;
+}
+
+button.del-btn:hover {
+  background: #ef4444;
+  transform: none;
+  box-shadow: none;
+}
+
+/* =============================================
+   Monitor 페이지 전용 레이아웃 (PC 2분할)
+   ============================================= */
+
+/* 모니터 페이지 전체 래퍼 */
+.monitor-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 0;
+}
+
+.monitor-header {
+  padding: 12px 16px 0;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.monitor-header h1 {
+  text-align: left;
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+/* 기본(모바일): 단일 컬럼 */
+.monitor-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  padding: 0 8px 8px;
+}
+
+.panel-left,
+.panel-right {
+  width: 100%;
+}
+
+/* 콘솔: 모바일에서는 기존 고정 높이 유지 */
+.console-full {
+  height: 400px;
+  background: #000;
+  color: #0f0;
+  font-family: "Courier New", monospace;
+  font-size: 13px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid #555;
+  border-radius: 5px;
+  margin: 10px 0;
+}
+
+.console-card {
+  display: flex;
+  flex-direction: column;
+}
+
+/* PC (≥1024px): 2컬럼 레이아웃 */
+@media (min-width: 1024px) {
+  body {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .monitor-page {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .monitor-header {
+    padding: 10px 20px 0;
+    margin-bottom: 8px;
+  }
+
+  .monitor-header h1 {
+    font-size: 18px;
+    display: inline;
+    margin-right: 20px;
+  }
+
+  .monitor-header nav {
+    display: inline-flex;
+    margin-top: 0;
+    padding: 0;
+    border-top: none;
+    vertical-align: middle;
+    gap: 8px;
+  }
+
+  .monitor-header nav a {
+    padding: 4px 12px;
+    font-size: 13px;
+  }
+
+  .monitor-layout {
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+    padding: 0 8px 8px;
+    gap: 10px;
+    overflow: hidden;
+  }
+
+  .panel-left {
+    flex: 2 1 0;
+    min-width: 0;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .panel-left .card {
+    margin-bottom: 10px;
+    padding: 14px;
+    animation: none;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .panel-right {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-right .console-card {
+    flex: 1;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 콘솔이 우측 패널을 꽉 채우도록 */
+  .console-full {
+    flex: 1;
+    height: unset;
+    min-height: 0;
+    font-size: 12px;
+    margin: 8px 0;
+  }
 }
