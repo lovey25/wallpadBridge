@@ -77,6 +77,26 @@ public:
     return true;
   }
 
+  // 현관문 상태 업데이트
+  bool updateFrontDoor(const FrontDoorState &newState)
+  {
+    if (!newState.valid)
+      return false;
+
+    if (frontDoorState.valid)
+    {
+      if (frontDoorState.isOpen != newState.isOpen)
+      {
+        frontDoorState = newState;
+        return true;
+      }
+      return false;
+    }
+
+    frontDoorState = newState;
+    return true;
+  }
+
   // 난방 상태 업데이트
   bool updateClimate(uint8_t roomAddress, const ClimateState &newState)
   {
@@ -126,6 +146,11 @@ public:
     return doorLockState;
   }
 
+  FrontDoorState getFrontDoorState()
+  {
+    return frontDoorState;
+  }
+
   ClimateState getClimateState(uint8_t roomAddress)
   {
     String key = "climate_" + String(roomAddress);
@@ -171,6 +196,15 @@ public:
       first = false;
     }
 
+    // 현관문 상태
+    if (frontDoorState.valid)
+    {
+      if (!first)
+        json += ",";
+      json += DeviceDecoder::frontDoorStateToJson(frontDoorState);
+      first = false;
+    }
+
     // 난방 상태들
     for (auto &pair : climateStates)
     {
@@ -208,8 +242,17 @@ public:
     }
     case DEVICE_DOORLOCK:
     {
-      DoorLockState state = DeviceDecoder::decodeDoorLock(frame);
-      changed = updateDoorLock(state);
+      // 같은 디바이스 타입 내 두 채널을 SubCommand로 분기
+      if (frame.subCommand == DOOR_SUB_FRONTDOOR)
+      {
+        FrontDoorState state = DeviceDecoder::decodeFrontDoor(frame);
+        changed = updateFrontDoor(state);
+      }
+      else
+      {
+        DoorLockState state = DeviceDecoder::decodeDoorLock(frame);
+        changed = updateDoorLock(state);
+      }
       break;
     }
     case DEVICE_CLIMATE:
@@ -228,6 +271,7 @@ private:
   std::map<String, ClimateState> climateStates;
   FanState fanState = {false, 0, false};
   DoorLockState doorLockState = {false, false};
+  FrontDoorState frontDoorState = {false, false};
 };
 
 #endif

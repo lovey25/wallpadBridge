@@ -34,6 +34,7 @@ struct RS485Frame
   uint8_t length;
   uint8_t deviceType;
   uint8_t command;
+  uint8_t subCommand; // buffer[5]: 동일 deviceType 내 sub-protocol 구분 (예: 0x40 broadcast vs 0x43 control ack)
   uint8_t deviceAddress;
   uint8_t data[16]; // 최대 16바이트 데이터
   uint8_t dataLength;
@@ -115,6 +116,7 @@ public:
     frame.length = buffer[1];
     frame.deviceType = buffer[3];
     frame.command = buffer[4];
+    frame.subCommand = (bufferIndex >= 6) ? buffer[5] : 0x00;
 
     // Length 검증
     // 프로토콜 문서 기준 length는 프레임 전체 길이(예: 0x0B=11, 0x0D=13)로 사용됨.

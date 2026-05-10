@@ -53,10 +53,10 @@ Application Layer: MQTT (v3.1.1), WebSocket (실시간 로그), HTTP (설정 및
 - **MQTT Discovery**: 재부팅 시 자동으로 장치 등록 메시지 발행
   - Light 엔티티 3개 (거실1 거실2, 3way)
   - Fan 엔티티 (속도 제어 1-3단)
-  - Door Lock 엔티티
+  - Door Lock 엔티티 (도어락 제어 응답 기반, SubCommand `0x43`)
   - Climate 엔티티 4개 (온도조절기 4개(거실, 안방, 작은방1, 작은방2), 모드/온도 제어)
-  - Binary Sensor 엔티티 3개 (현관문 센서, 동작감지센서, 예비)
-  - Device 정보 포함 (식별자, 모델명, 제조사, 버전)
+  - Binary Sensor 엔티티: 외부 접점 3개 + RS485 현관문 1개 (`device_class: door`, broadcast SubCommand `0x40`)
+  - Device 정보(`bridge_info.h`): 식별자/이름/모델/제조사/버전 단일 헤더로 분리 — `credentials.h` 또는 PlatformIO `build_flags`로 override 가능
 - **가용성 관리**: LWT(Last Will and Testament)를 통한 온라인/오프라인 상태 실시간 모니터링
 - **상태 동기화**: RS485 장치 상태 변경 시 즉시 MQTT 발행 (변경 감지 기반)
 
@@ -380,6 +380,13 @@ MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
 | **ESP-12E Binary In** | GPIO13이 RS485 RX 겸용 — 3채널 모두 필요 시 핀 재배치 필요      | 해당 없음                            |
 
 ## ✅ 최근 해결된 이슈
+
+### 2026-05-10: 현관문 broadcast 채널 + 디바이스 메타정보 분리
+
+- **현관문 sub-protocol 분리**: 도어락(`0x1E`) 디바이스의 SubCommand 채널을 `0x40`(상태 broadcast) / `0x43`(제어 응답)으로 명시 분리
+- **RS485Frame 확장**: 파서에 `subCommand`(buffer[5]) 필드 추가 — 동일 deviceType 내 sub-protocol 구분 가능
+- **HA 신규 엔티티**: 현관문 `binary_sensor`(`device_class: door`) 자동 등록, 토픽 `home/wallpad/frontdoor/state`
+- **bridge_info.h**: HA Discovery용 디바이스 메타정보(식별자/이름/모델/제조사/버전)를 단일 헤더 매크로로 분리, 두 군데 중복 제거 + `#ifndef` 가드로 build flag override 지원
 
 ### 2026-04-28: ESP12e / ESP32 멀티보드 지원 추가
 

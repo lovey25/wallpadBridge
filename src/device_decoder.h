@@ -4,6 +4,12 @@
 #include <Arduino.h>
 #include "rs485_parser.h"
 
+// 도어락(0x1E) 디바이스의 SubCommand 채널
+// 0x40: 현관문 상태 broadcast (door sensor)
+// 0x43: 도어락 제어 응답 (lock control ack)
+#define DOOR_SUB_FRONTDOOR 0x40
+#define DOOR_SUB_LOCKCTRL 0x43
+
 // 조명 상태
 struct LightState
 {
@@ -24,6 +30,13 @@ struct FanState
 struct DoorLockState
 {
   bool isOpen; // 열림/닫힘
+  bool valid;
+};
+
+// 현관문 상태 (door sensor)
+struct FrontDoorState
+{
+  bool isOpen; // 열림(true) / 닫힘(false)
   bool valid;
 };
 
@@ -89,7 +102,8 @@ public:
     return state;
   }
 
-  // 도어락 상태 디코딩
+  // 도어락 제어 응답 디코딩 (SubCommand 0x43)
+  // RES: F7 0C 01 1E 04 43 11 04 00 04
   static DoorLockState decodeDoorLock(const RS485Frame &frame)
   {
     DoorLockState state;
@@ -100,10 +114,43 @@ public:
       return state;
     }
 
+    // 도어락 제어 응답 채널만 처리
+    if (frame.subCommand != DOOR_SUB_LOCKCTRL)
+    {
+      return state;
+    }
+
     if (frame.command == CMD_RESPONSE && frame.dataLength >= 1)
     {
-      // 도어락 상태 (프로토콜 기준 확인 필요)
       state.isOpen = (frame.data[0] == 0x04);
+      state.valid = true;
+    }
+
+    return state;
+  }
+
+  // 현관문 상태 broadcast 디코딩 (SubCommand 0x40)
+  // RES (닫힘): F7 0C 01 1E 04 40 11 00 02 03
+  // RES (열림): F7 0C 01 1E 04 40 11 00 02 04
+  static FrontDoorState decodeFrontDoor(const RS485Frame &frame)
+  {
+    FrontDoorState state;
+    state.valid = false;
+
+    if (!frame.valid || frame.deviceType != DEVICE_DOORLOCK)
+    {
+      return state;
+    }
+
+    if (frame.subCommand != DOOR_SUB_FRONTDOOR)
+    {
+      return state;
+    }
+
+    if (frame.command == CMD_RESPONSE && frame.dataLength >= 3)
+    {
+      uint8_t status = frame.data[2]; // 0x03=닫힘, 0x04=열림
+      state.isOpen = (status == 0x04);
       state.valid = true;
     }
 
@@ -184,6 +231,19 @@ public:
     return json;
   }
 
+  // 현관문 상태를 JSON 문자열로 변환 (HA binary_sensor용 ON/OFF)
+  static String frontDoorStateToJson(const FrontDoorState &state)
+  {
+    if (!state.valid)
+      return "{}";
+
+    String json = "{";
+    json += "\"device\":\"frontdoor\",";
+    json += "\"state\":\"" + String(state.isOpen ? "ON" : "OFF") + "\"";
+    json += "}";
+    return json;
+  }
+
   // 난방 상태를 JSON 문자열로 변환
   static String climateStateToJson(const ClimateState &state)
   {
@@ -229,6 +289,12 @@ public:
     }
     case DEVICE_DOORLOCK:
     {
+      // SubCommand로 채널 분기
+      if (frame.subCommand == DOOR_SUB_FRONTDOOR)
+      {
+        FrontDoorState state = decodeFrontDoor(frame);
+        return frontDoorStateToJson(state);
+      }
       DoorLockState state = decodeDoorLock(frame);
       return doorLockStateToJson(state);
     }

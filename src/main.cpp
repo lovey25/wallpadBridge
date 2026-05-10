@@ -20,6 +20,7 @@
 #include "device_decoder.h"
 #include "device_manager.h"
 #include "command_builder.h"
+#include "bridge_info.h"
 
 // ─── RS485 시리얼 객체 ────────────────────────────────────────
 // D1 Mini  : SoftwareSerial (D2=RX, D1=TX)
@@ -460,7 +461,11 @@ void processRS485Incoming()
             topic += "fan/state";
             break;
           case DEVICE_DOORLOCK:
-            topic += "doorlock/state";
+            // SubCommand 0x40: 현관문 상태 broadcast / 0x43: 도어락 제어 응답
+            if (frame.subCommand == DOOR_SUB_FRONTDOOR)
+              topic += "frontdoor/state";
+            else
+              topic += "doorlock/state";
             break;
           case DEVICE_CLIMATE:
             topic += "climate/" + String(frame.deviceAddress - 0x10) + "/state";
@@ -951,7 +956,7 @@ bool publishDiscoveryEntity(int index)
   if (!mqtt.connected() || ESP.getFreeHeap() < 12000)
     return false;
 
-  const char *deviceInfo = ",\"device\":{\"identifiers\":[\"wallpad_bridge\"],\"name\":\"Wallpad Bridge\",\"model\":\"ESP8266 RS485\",\"manufacturer\":\"EveryX\",\"sw_version\":\"1.0.0\"}";
+  const char *deviceInfo = HA_DEVICE_INFO_JSON;
   String config, topic;
   bool result = false;
 
@@ -1036,7 +1041,7 @@ bool publishDiscoveryEntity(int index)
 
   case 9:  // Binary Sensor 1
   case 10: // Binary Sensor 2
-  case 11: // Binary Sensor 3 (마지막)
+  case 11: // Binary Sensor 3
   {
     int sensorNum = index - 8;
     config = "{\"name\":\"Binary Sensor " + String(sensorNum) + "\",\"unique_id\":\"wallpad_binary_" + String(sensorNum) + "\",\"state_topic\":\"home/wallpad/binary/" + String(sensorNum) + "\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device_class\":\"motion\"";
@@ -1048,6 +1053,13 @@ bool publishDiscoveryEntity(int index)
     // Serial.printf("[DISCOVERY] Published: Binary Sensor %d\n", sensorNum);
   }
   break;
+
+  case 12: // Front Door (현관문 열림감지)
+    config = "{\"name\":\"현관문\",\"unique_id\":\"wallpad_frontdoor\",\"state_topic\":\"home/wallpad/frontdoor/state\",\"value_template\":\"{{ value_json.state }}\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"device_class\":\"door\"";
+    config += deviceInfo;
+    config += "}";
+    result = mqtt.publish("homeassistant/binary_sensor/wallpad_frontdoor/config", config.c_str(), true);
+    break;
 
   default:
     return false;
@@ -1067,7 +1079,7 @@ void publishDiscovery()
   yield();
 
   // Device 정보 (모든 엔티티에 공통)
-  const char *deviceInfo = ",\"device\":{\"identifiers\":[\"wallpad_bridge\"],\"name\":\"Wallpad Bridge\",\"model\":\"ESP8266 RS485\",\"manufacturer\":\"EveryX\",\"sw_version\":\"1.0.0\"}";
+  const char *deviceInfo = HA_DEVICE_INFO_JSON;
 
   int successCount = 0;
 
@@ -1201,6 +1213,26 @@ void publishDiscovery()
 
     String topic = "homeassistant/binary_sensor/" + sensorId + "/config";
     if (mqtt.publish(topic.c_str(), config.c_str(), true))
+      successCount++;
+    yield();
+    delay(100);
+  }
+
+  // 6. Front Door 엔티티 (현관문 열림감지)
+  if (ESP.getFreeHeap() > 12000)
+  {
+    String config = "{";
+    config += "\"name\":\"현관문\",";
+    config += "\"unique_id\":\"wallpad_frontdoor\",";
+    config += "\"state_topic\":\"home/wallpad/frontdoor/state\",";
+    config += "\"value_template\":\"{{ value_json.state }}\",";
+    config += "\"payload_on\":\"ON\",";
+    config += "\"payload_off\":\"OFF\",";
+    config += "\"device_class\":\"door\"";
+    config += deviceInfo;
+    config += "}";
+
+    if (mqtt.publish("homeassistant/binary_sensor/wallpad_frontdoor/config", config.c_str(), true))
       successCount++;
     yield();
     delay(100);
@@ -1953,7 +1985,7 @@ void loop()
         if (publishDiscoveryEntity(discoveryIndex))
         {
           discoveryIndex++;
-          if (discoveryIndex >= 12) // 총 12개 엔티티 (Light 3 + Fan 1 + Lock 1 + Climate 4 + Binary 3)
+          if (discoveryIndex >= 13) // 총 13개 엔티티 (Light 3 + Fan 1 + Lock 1 + Climate 4 + Binary 3 + FrontDoor 1)
           {
             // Serial.println("[DISCOVERY] All entities published!");
             discoveryPublished = true;

@@ -4,23 +4,11 @@
 
 ---
 
-## 🖥️ 모니터 UI 개선 (진행 중)
-
-**우선순위: High** — 쉬운 것부터 단계별 적용
-
-- [x] **Step 1**: 시간 포맷 HHMMSS 변환 — `addLog()` `[HH:MM:SS]` 고정 2자리 포맷
-- [x] **Step 2**: PC 2분할 레이아웃 + 전체화면 — 좌측 컨트롤 / 우측 로그 콘솔, body 여백 최소화
-- [x] **Step 3**: 알려진 코드 숨기기 — `knownCodes[]` + 토글, `localStorage` 영속
-- [x] **Step 4**: HEX 바이트 필터 — 바이트 위치 + HEX 값 + 일치/불일치 룰, `localStorage` 영속
-- [x] **Step 5**: HEX → 십진수 분석 — 필드 위치+레이블 지정 → 로그 뒤에 `[레이블: N]` 자동 표시
-
----
-
 ## 🎯 미완료 항목 (Pending)
 
 ### RS485 통신 테스트
 
-- [ ] 프로토콜 문서 업데이트 (실제 수신 데이터 기반으로 wallpad_protocol.md 보완)
+- [ ] 신규 프레임 발견 시 `wallpad_protocol.md` 보완 (실수신 데이터 기반)
 
 ### Home Assistant 통합 검증
 
